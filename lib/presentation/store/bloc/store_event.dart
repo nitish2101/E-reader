@@ -53,5 +53,10 @@ class UpdateSourceFilter extends StoreEvent {
 }
 
 class LoadCachedBooks extends StoreEvent {
-  const LoadCachedBooks();
+  final List<Format> formats;
+  
+  const LoadCachedBooks({this.formats = const [Format.pdf, Format.epub]});
+  
+  @override
+  List<Object?> get props => [formats];
 }

@@ -32,12 +32,6 @@ class LibraryScreen extends StatelessWidget {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () {
-              // TODO: Implement search functionality
-            },
-          ),
-          IconButton(
             icon: const Icon(Icons.sort),
             onPressed: () {
               _showSortOptions(context);

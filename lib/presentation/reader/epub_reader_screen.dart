@@ -45,6 +45,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   String? _currentSelection; // Stores current text selection
   bool _hasDirtyProgress = false;
   bool _hasResumedPosition = false; // Guard: navigate to saved CFI only once
+  int _savedScrollOffset = 0; // Pixel offset for precise CFI restoration
+  int _currentScrollOffset = 0; // Live scroll offset tracked from JS
 
   // Save debounce — fires 3s after last scroll
   Timer? _saveDebounceTimer;
@@ -99,6 +101,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             book.lastReadCfi!.startsWith('epubcfi('))
         ? book.lastReadCfi
         : null;
+    // Load saved scroll offset for precise position restoration
+    final settingsBox = Hive.box('settings');
+    _savedScrollOffset = settingsBox.get('scrollOffset_${widget.bookId}', defaultValue: 0);
     // No setState needed — didChangeDependencies runs before first build
   }
 
@@ -147,6 +152,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         progress: _progress,
         cfi: _currentCfi,
       );
+      // Save scroll offset synchronously from Dart state (tracked real-time from JS)
+      final settingsBox = Hive.box('settings');
+      settingsBox.put('scrollOffset_${widget.bookId}', _currentScrollOffset);
     } catch (e) {
       debugPrint('Failed to save progress: $e');
     }
@@ -326,6 +334,27 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           await _applyCustomStyles();
         } catch (_) {}
 
+        // Register custom handler to track scroll offset in real-time
+        _epubController?.webViewController?.addJavaScriptHandler(
+          handlerName: 'scrollOffsetChanged',
+          callback: (args) {
+            if (args.isNotEmpty && args[0] != null) {
+              _currentScrollOffset = (args[0] is int) ? args[0] : int.tryParse(args[0].toString()) ?? 0;
+            }
+          },
+        );
+
+        // Apply saved scroll offset for precise position restoration
+        if (_savedScrollOffset != 0 && _initialCfi != null) {
+          Future.delayed(const Duration(milliseconds: 800), () {
+            if (mounted) {
+              _epubController?.webViewController?.evaluateJavascript(
+                source: 'applyScrollOffset($_savedScrollOffset)',
+              );
+            }
+          });
+        }
+
         if (mounted) setState(() => _isEpubLoading = false);
       },
       onRelocated: (location) {
@@ -454,7 +483,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     Text(
-                      '${(_progress * 100).toInt()}%',
+                      '${(_progress * 100).toStringAsFixed(1)}%',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,

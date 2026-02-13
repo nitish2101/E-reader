@@ -71,7 +71,7 @@ class BookCard extends StatelessWidget {
                       left: 0,
                       right: 0,
                       child: LinearProgressIndicator(
-                        value: book.lastReadProgress,
+                        value: book.lastReadProgress < 0.01 ? 0.01 : book.lastReadProgress,
                         backgroundColor: Colors.black26,
                         valueColor: AlwaysStoppedAnimation<Color>(
                           Theme.of(context).colorScheme.primary,
