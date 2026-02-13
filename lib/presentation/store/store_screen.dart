@@ -6,6 +6,7 @@ import '../../core/theme/theme_cubit.dart';
 import '../../core/services/store_preload_service.dart';
 import '../../data/repositories/store_repository.dart';
 import '../../data/repositories/book_repository.dart';
+import '../../data/repositories/settings_repository.dart';
 import 'bloc/store_bloc.dart';
 import 'widgets/store_book_card.dart';
 
@@ -42,7 +43,9 @@ class _StoreContentState extends State<_StoreContent> {
     _scrollController.addListener(_onScroll);
     // Load cached books or popular fiction on startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<StoreBloc>().add(const LoadCachedBooks());
+      final preferredFormat = context.read<SettingsRepository>().getDownloadFormat();
+      final formats = preferredFormat == 'epub' ? [Format.epub] : [Format.pdf];
+      context.read<StoreBloc>().add(LoadCachedBooks(formats: formats));
     });
   }
 
@@ -70,7 +73,10 @@ class _StoreContentState extends State<_StoreContent> {
   void _onSearchChanged(String query) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () {
-      context.read<StoreBloc>().add(SearchBooks(query));
+      final preferredFormat = context.read<SettingsRepository>().getDownloadFormat();
+      final formats = preferredFormat == 'epub' ? [Format.epub] : [Format.pdf];
+      print('[StoreScreen] Preferred format: $preferredFormat, formats: $formats');
+      context.read<StoreBloc>().add(SearchBooks(query, formats: formats));
     });
   }
 
@@ -147,7 +153,9 @@ class _StoreContentState extends State<_StoreContent> {
                   onPressed: () {
                     if (_searchController.text.isNotEmpty) {
                       _debounce?.cancel();
-                      context.read<StoreBloc>().add(SearchBooks(_searchController.text));
+                      final preferredFormat = context.read<SettingsRepository>().getDownloadFormat();
+                      final formats = preferredFormat == 'epub' ? [Format.epub] : [Format.pdf];
+                      context.read<StoreBloc>().add(SearchBooks(_searchController.text, formats: formats));
                     }
                   },
                   tooltip: 'Search',

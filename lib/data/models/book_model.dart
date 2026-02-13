@@ -71,7 +71,11 @@ class BookModel extends HiveObject {
   bool get isPdf => format.toLowerCase() == 'pdf';
   bool get isEpub => format.toLowerCase() == 'epub';
   
-  int get readingPercentage => (lastReadProgress * 100).round();
+  String get readingPercentage {
+    final percent = lastReadProgress * 100;
+    if (percent == 0) return '0';
+    return percent.toStringAsFixed(1);
+  }
   
   bool get hasStartedReading => lastReadPage > 0 || lastReadProgress > 0;
 

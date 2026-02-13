@@ -135,13 +135,6 @@ class StoreBookCard extends StatelessWidget {
                   const Spacer(),
                   Row(
                     children: [
-                      if (book.fileSize != null && book.fileSize!.isNotEmpty)
-                        Text(
-                          _formatSize(book.fileSize!),
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.grey[500],
-                              ),
-                        ),
                       const Spacer(),
                       SizedBox(
                         height: 32,
