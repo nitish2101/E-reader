@@ -114,14 +114,12 @@ class CircuitBreaker {
     
     if (_failureCount >= failureThreshold) {
       _isOpen = true;
-      print('Circuit breaker [$name] OPENED after $_failureCount failures');
     }
   }
   
   bool canExecute() {
     if (isClosed) return true;
     if (isHalfOpen) {
-      print('Circuit breaker [$name] HALF-OPEN: attempting reset');
       return true;
     }
     return false;
@@ -265,9 +263,9 @@ class StoreRepository {
     // Configure Dio with interceptors
     _dio = Dio(
       BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
+        connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 30),
         headers: {
           'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -280,23 +278,7 @@ class StoreRepository {
       ),
     );
     
-    // Add logging interceptor in debug mode
-    _dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          print('[Dio] ${options.method} ${options.uri}');
-          return handler.next(options);
-        },
-        onResponse: (response, handler) {
-          print('[Dio] ${response.statusCode} ${response.requestOptions.uri}');
-          return handler.next(response);
-        },
-        onError: (error, handler) {
-          print('[Dio] ERROR ${error.response?.statusCode} ${error.requestOptions.uri}: ${error.message}');
-          return handler.next(error);
-        },
-      ),
-    );
+    // Logging interceptor removed for production
   }
   
   /// Retry logic with exponential backoff and jitter
@@ -328,7 +310,6 @@ class StoreRepository {
         final jitter = Random().nextInt(delayMs ~/ 4);
         final delay = Duration(milliseconds: delayMs + jitter);
         
-        print('$operationName attempt $attempts failed, retrying in ${delay.inSeconds}s...');
         await Future.delayed(delay);
       }
     }
@@ -350,7 +331,7 @@ class StoreRepository {
     final List<UnifiedBook> allBooks = [];
     final List<String> errors = [];
     
-    final searchTimeout = timeout ?? const Duration(seconds: 15);
+    final searchTimeout = timeout ?? const Duration(seconds: 30);
 
     // Search Anna's Archive with circuit breaker
     if (searchAnnasArchive && _annaCircuitBreaker.canExecute()) {
@@ -368,53 +349,16 @@ class StoreRepository {
         _annaCircuitBreaker.recordSuccess();
       } on SearchTimeoutException catch (e) {
         errors.add('Anna\'s Archive: Timeout');
-        print('Anna\'s Archive search timeout: $e');
       } catch (e) {
         errors.add('Anna\'s Archive: ${e.toString()}');
-        print('Error searching Anna\'s Archive: $e');
         _annaCircuitBreaker.recordFailure();
       }
     } else if (searchAnnasArchive && !_annaCircuitBreaker.canExecute()) {
-      print('Skipping Anna\'s Archive search - circuit breaker is OPEN');
       errors.add('Anna\'s Archive: Temporarily unavailable');
     }
 
-    // Search LibGen with circuit breaker (only on first page to avoid duplicates)
-    if (searchLibgen && page == 1 && _libgenCircuitBreaker.canExecute()) {
-      try {
-        final libgenBooks = await _searchLibgenWithMirrorsAndRetry(
-          query: query,
-          formats: formats,
-          timeout: searchTimeout,
-        );
-        
-        allBooks.addAll(libgenBooks);
-        _libgenCircuitBreaker.recordSuccess();
-      } on MirrorUnavailableException catch (e) {
-        errors.add('LibGen: All mirrors unavailable');
-        print('LibGen mirrors unavailable: $e');
-        _libgenCircuitBreaker.recordFailure();
-      } on SearchTimeoutException catch (e) {
-        errors.add('LibGen: Timeout');
-        print('LibGen search timeout: $e');
-      } catch (e) {
-        errors.add('LibGen: ${e.toString()}');
-        print('Error searching LibGen: $e');
-        _libgenCircuitBreaker.recordFailure();
-      }
-    } else if (searchLibgen && page == 1 && !_libgenCircuitBreaker.canExecute()) {
-      print('Skipping LibGen search - circuit breaker is OPEN');
-      errors.add('LibGen: Temporarily unavailable');
-    }
-
-    // Log search results summary
-    print('Search completed: ${allBooks.length} total results (Anna\'s Archive + LibGen)');
-    if (errors.isNotEmpty) {
-      print('Errors encountered: ${errors.join(', ')}');
-    }
-
-    // Deduplicate by MD5 with priority to Anna's Archive
-    return _deduplicateBooks(allBooks);
+    // Return books (no deduplication needed with single source)
+    return allBooks;
   }
   
   /// Search Anna's Archive with retry logic
@@ -475,21 +419,15 @@ class StoreRepository {
     final booksWithoutMd5 = books.where((b) => (b.md5?.isEmpty ?? true)).toList();
     
     final deduplicated = [...md5Map.values, ...booksWithoutMd5];
-    print('Deduplication: ${books.length} -> ${deduplicated.length} books');
     
     return deduplicated;
   }
 
-  /// Get download links for a book with fallback
+  /// Get download links for a book
   Future<List<String>> getDownloadLinks(UnifiedBook book) async {
     try {
-      if (book.source == BookSource.annasArchive) {
-        return await _getAnnaDownloadLinksWithRetry(book.md5);
-      } else {
-        return await _getLibgenDownloadLinksWithRetry(book.downloadUrl, book.md5);
-      }
+      return await _getAnnaDownloadLinksWithRetry(book.md5);
     } catch (e) {
-      print('Error getting download links: $e');
       return [];
     }
   }
@@ -598,7 +536,7 @@ class StoreRepository {
       options: Options(
         followRedirects: true,
         validateStatus: (status) => status != null && status < 500,
-        receiveTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 30),
       ),
     );
     

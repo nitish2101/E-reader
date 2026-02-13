@@ -13,11 +13,12 @@ class LibraryLoading extends LibraryState {}
 
 class LibraryLoaded extends LibraryState {
   final List<BookModel> books;
+  final DateTime _refreshTime; // Unique timestamp to force Equatable to detect changes
 
-  const LibraryLoaded(this.books);
+  LibraryLoaded(this.books) : _refreshTime = DateTime.now();
 
   @override
-  List<Object?> get props => [books];
+  List<Object?> get props => [books, _refreshTime];
 
   bool get isEmpty => books.isEmpty;
 }

@@ -7,88 +7,103 @@ import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:hive/hive.dart';
 
 import '../../data/repositories/book_repository.dart';
-import 'bloc/reader_bloc.dart';
 
-class EpubReaderScreen extends StatelessWidget {
+/// EPUB reader screen — completely Bloc-free during reading.
+///
+/// Architecture:
+/// - Book data loaded synchronously from Hive (no Bloc needed)
+/// - Progress tracked 100% locally — no state emissions, no rebuilds
+/// - Saves to repository on: scroll-stop debounce, back button,
+///   app lifecycle pause, and dispose
+/// - Resume uses ONLY `initialCfi` parameter — no secondary navigation
+/// - `onRelocated` never triggers setState or Bloc events
+class EpubReaderScreen extends StatefulWidget {
   final String bookId;
 
   const EpubReaderScreen({super.key, required this.bookId});
 
   @override
-  Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => ReaderBloc(
-        bookRepository: context.read<BookRepository>(),
-      )..add(LoadBook(bookId)),
-      child: _EpubReaderContent(bookId: bookId),
-    );
-  }
+  State<EpubReaderScreen> createState() => _EpubReaderScreenState();
 }
 
-class _EpubReaderContent extends StatefulWidget {
-  final String bookId;
-  const _EpubReaderContent({required this.bookId});
-
-  @override
-  State<_EpubReaderContent> createState() => _EpubReaderContentState();
-}
-
-class _EpubReaderContentState extends State<_EpubReaderContent> {
+class _EpubReaderScreenState extends State<EpubReaderScreen>
+    with WidgetsBindingObserver {
+  // EPUB controller
   EpubController? _epubController;
-  Timer? _autoSaveTimer;
-  Timer? _progressDebounceTimer;
-  bool _showControls = false;
-  double _progress = 0.0;
-  double _pendingProgress = 0.0;
-  String? _lastCfi;
-  String? _pendingCfi;
-  String? _initialCfi; // Store initial CFI once, don't re-read from state
-  bool _initialCfiSet = false;
-  bool _hasNavigatedToSavedPosition = false; // Only navigate to saved CFI once
-  bool _epubFullyLoaded = false; // Track if epub has loaded at least once
-  Widget? _cachedEpubViewer; // Cache the viewer to prevent rebuilds
-  List<EpubChapter> _chapters = [];
-  bool _isLoading = true;
-  bool _isSliderDragging = false;
+
+  // Book data — loaded once from repository, never changes
+  String? _bookTitle;
   String? _bookFilePath;
-  late BookRepository _bookRepository; // Cached ref for dispose
+  String? _initialCfi;
+  String? _loadError;
+  bool _bookDataLoaded = false;
+
+  // Live progress — local only, zero Bloc interaction
+  double _progress = 0.0;
+  String? _currentCfi;
+  bool _hasDirtyProgress = false;
+  bool _hasResumedPosition = false; // Guard: navigate to saved CFI only once
+
+  // Save debounce — fires 3s after last scroll
+  Timer? _saveDebounceTimer;
+
+  // UI state
+  bool _showControls = false;
+  bool _isEpubLoading = true; // WebView still loading the EPUB
+  bool _isSliderDragging = false;
+  List<EpubChapter> _chapters = [];
+  Widget? _cachedEpubViewer; // Cached to prevent ANY rebuilds
 
   // Settings
   int _fontSize = 18;
   String _currentThemeName = 'Light';
 
-  // Track user scroll activity to prevent navigation jumps
-  DateTime? _lastUserScrollTime;
-  static const _scrollCooldownMs = 2000; // 2 second cooldown after scroll
+  late BookRepository _bookRepository;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _epubController = EpubController();
-
-    // Load saved settings
     _loadSavedSettings();
-
-    // Hide system UI for immersive reading
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
 
-    // Auto-save every 10 seconds — context now has access to ReaderBloc
-    _autoSaveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (mounted) {
-        _saveProgressToBloc();
-      }
-    });
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bookRepository = context.read<BookRepository>();
+    // Load book data once (synchronous Hive lookup)
+    if (!_bookDataLoaded && _loadError == null) {
+      _loadBookData();
+    }
+  }
+
+  /// Load book from Hive — instant, no async needed
+  void _loadBookData() {
+    final book = _bookRepository.getBook(widget.bookId);
+    if (book == null) {
+      setState(() => _loadError = 'Book not found');
+      return;
+    }
+    _bookDataLoaded = true;
+    _bookTitle = book.title;
+    _bookFilePath = book.localPath;
+    _progress = book.lastReadProgress;
+    _currentCfi = book.lastReadCfi;
+    // Only use CFI if it's a valid epubcfi string
+    _initialCfi = (book.lastReadCfi != null &&
+            book.lastReadCfi!.isNotEmpty &&
+            book.lastReadCfi!.startsWith('epubcfi('))
+        ? book.lastReadCfi
+        : null;
+    // No setState needed — didChangeDependencies runs before first build
   }
 
   void _loadSavedSettings() {
     final settingsBox = Hive.box('settings');
-    // Load globally saved theme and font size - these persist across all books
-    final savedTheme = settingsBox.get('readerTheme', defaultValue: 'Light');
-    final savedFontSize = settingsBox.get('readerFontSize', defaultValue: 18);
-    setState(() {
-      _currentThemeName = savedTheme;
-      _fontSize = savedFontSize;
-    });
+    _currentThemeName = settingsBox.get('readerTheme', defaultValue: 'Light');
+    _fontSize = settingsBox.get('readerFontSize', defaultValue: 18);
   }
 
   void _saveSettings() {
@@ -97,153 +112,126 @@ class _EpubReaderContentState extends State<_EpubReaderContent> {
     settingsBox.put('readerFontSize', _fontSize);
   }
 
+  // ---------------------------------------------------------------------------
+  // Lifecycle & save
+  // ---------------------------------------------------------------------------
+
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Cache repository reference so it's available in dispose()
-    _bookRepository = context.read<BookRepository>();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _saveProgressNow();
+    }
   }
 
   @override
   void dispose() {
-    // Cancel debounce timer so pending values don't fire after dispose
-    _progressDebounceTimer?.cancel();
-    _autoSaveTimer?.cancel();
-
-    // Flush pending progress and save directly to repository
-    // (bloc events may not process in time during dispose)
-    if (_pendingCfi != null) {
-      _lastCfi = _pendingCfi;
-      _progress = _pendingProgress > 0 ? _pendingProgress : _progress;
-    }
-    if (_lastCfi != null && _lastCfi!.isNotEmpty) {
-      try {
-        _bookRepository.updateReadingProgress(
-          bookId: widget.bookId,
-          page: 0,
-          progress: _progress,
-          cfi: _lastCfi,
-        );
-        debugPrint('Progress saved on dispose: cfi=$_lastCfi, progress=$_progress');
-      } catch (e) {
-        debugPrint('Failed to save progress on dispose: $e');
-      }
-    }
-
+    WidgetsBinding.instance.removeObserver(this);
+    _saveDebounceTimer?.cancel();
+    _saveProgressNow();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
-  /// Save current progress to the bloc (which persists to Hive)
-  void _saveProgressToBloc() {
+  /// Immediately persist current progress to Hive (no Bloc)
+  void _saveProgressNow() {
+    if (!_hasDirtyProgress) return;
+    if (_currentCfi == null || _currentCfi!.isEmpty) return;
+    _hasDirtyProgress = false;
     try {
-      // Flush any pending debounced progress to the bloc first
-      if (_pendingCfi != null) {
-        _lastCfi = _pendingCfi;
-        _progress = _pendingProgress > 0 ? _pendingProgress : _progress;
-        _pendingCfi = null;
-        context.read<ReaderBloc>().add(UpdateEpubProgress(
-          cfi: _lastCfi ?? '',
-          progress: _progress,
-        ));
-      }
-      context.read<ReaderBloc>().add(SaveProgress());
-      debugPrint('Progress save triggered: cfi=$_lastCfi, progress=$_progress');
+      _bookRepository.updateReadingProgress(
+        bookId: widget.bookId,
+        page: 0,
+        progress: _progress,
+        cfi: _currentCfi,
+      );
     } catch (e) {
-      debugPrint('Failed to trigger progress save: $e');
+      debugPrint('Failed to save progress: $e');
     }
   }
 
-  void _toggleControls() {
-    setState(() {
-      _showControls = !_showControls;
-    });
+  /// Schedule a save after the user stops scrolling for 3 seconds
+  void _scheduleSave() {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(seconds: 3), _saveProgressNow);
   }
+
+  // ---------------------------------------------------------------------------
+  // Controls
+  // ---------------------------------------------------------------------------
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-    return BlocConsumer<ReaderBloc, ReaderState>(
-      listener: (context, state) {
-        // Capture the initial CFI only once when the book first loads
-        if (!_initialCfiSet && state is ReaderLoaded) {
-          _initialCfi = state.cfi;
-          _initialCfiSet = true;
-          _bookFilePath = state.book.localPath;
-          debugPrint('Initial CFI captured: $_initialCfi');
-          if (state.progress > 0) {
-            setState(() {
-              _progress = state.progress;
-            });
-          }
+    if (_loadError != null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(_loadError!),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_bookDataLoaded) {
+      return Scaffold(
+        backgroundColor: _getBackgroundColor(),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return PopScope(
+      canPop: true,
+      onPopInvoked: (bool didPop) {
+        if (didPop) {
+          _saveDebounceTimer?.cancel();
+          _saveProgressNow();
         }
       },
-      builder: (context, state) {
-        if (state is ReaderLoading) {
-          return Scaffold(
-            backgroundColor: _getBackgroundColor(),
-            body: const Center(child: CircularProgressIndicator()),
-          );
-        }
+      child: Scaffold(
+        backgroundColor: _getBackgroundColor(),
+        body: Stack(
+          children: [
+            // EPUB viewer — cached, never rebuilt
+            Positioned.fill(child: _getOrBuildEpubViewer()),
 
-        if (state is ReaderError) {
-          return Scaffold(
-            appBar: AppBar(),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text(state.message),
-                ],
-              ),
-            ),
-          );
-        }
-
-        if (state is ReaderLoaded || state is ProgressSaved) {
-          final book = state is ReaderLoaded
-              ? state.book
-              : (state as ProgressSaved).book;
-
-          return Scaffold(
-            backgroundColor: _getBackgroundColor(),
-            body: Stack(
-              children: [
-                // EPUB Viewer — built only once, cached to prevent rebuilds
-                Positioned.fill(
-                  child: _bookFilePath != null
-                      ? _getOrBuildEpubViewer(context)
-                      : const Center(child: CircularProgressIndicator()),
+            // Loading overlay while WebView initialises
+            if (_isEpubLoading)
+              IgnorePointer(
+                child: Container(
+                  color: _getBackgroundColor(),
+                  child: const Center(child: CircularProgressIndicator()),
                 ),
+              ),
 
-                // Loading overlay
-                if (_isLoading)
-                  IgnorePointer(
-                    child: Container(
-                      color: _getBackgroundColor(),
-                      child: const Center(child: CircularProgressIndicator()),
-                    ),
-                  ),
+            // Top bar
+            if (_showControls) _buildTopBar(context, _bookTitle ?? ''),
 
-                // Top bar (only when controls visible)
-                if (_showControls) _buildTopBar(context, book.title),
-
-                // Bottom bar (only when controls visible)
-                if (_showControls) _buildBottomBar(context),
-              ],
-            ),
-            drawer: _buildChapterDrawer(context),
-          );
-        }
-
-        return Scaffold(
-          backgroundColor: _getBackgroundColor(),
-          body: const Center(child: CircularProgressIndicator()),
-        );
-      },
+            // Bottom bar with progress slider
+            if (_showControls) _buildBottomBar(context),
+          ],
+        ),
+        drawer: _buildChapterDrawer(context),
+      ),
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Theme helpers
+  // ---------------------------------------------------------------------------
 
   Color _getBackgroundColor() {
     switch (_currentThemeName) {
@@ -273,120 +261,64 @@ class _EpubReaderContentState extends State<_EpubReaderContent> {
     }
   }
 
-  /// Return the cached viewer, or build it once on first call.
-  Widget _getOrBuildEpubViewer(BuildContext context) {
-    _cachedEpubViewer ??= _buildEpubViewer(context, _bookFilePath!, _initialCfi);
+  // ---------------------------------------------------------------------------
+  // EPUB viewer (built once, cached forever)
+  // ---------------------------------------------------------------------------
+
+  Widget _getOrBuildEpubViewer() {
+    _cachedEpubViewer ??= _buildEpubViewer();
     return _cachedEpubViewer!;
   }
 
-  Widget _buildEpubViewer(BuildContext context, String filePath, String? initialCfi) {
-    String? validCfi;
-    if (initialCfi != null && initialCfi.isNotEmpty && initialCfi.startsWith('epubcfi(')) {
-      validCfi = initialCfi;
-    }
-
+  Widget _buildEpubViewer() {
     return EpubViewer(
       epubController: _epubController!,
-      epubSource: EpubSource.fromFile(File(filePath)),
-      initialCfi: validCfi,
+      epubSource: EpubSource.fromFile(File(_bookFilePath!)),
+      initialCfi: _initialCfi, // The ONLY way we set the start position
       displaySettings: EpubDisplaySettings(
         flow: EpubFlow.scrolled,
         spread: EpubSpread.none,
-        snap: false, // Disable snap for free vertical scrolling
-        allowScriptedContent: true, // Scripts needed for proper epub rendering
+        snap: false,
+        allowScriptedContent: true,
         manager: EpubManager.continuous,
         theme: _getTheme(),
         fontSize: _fontSize,
       ),
       onChaptersLoaded: (chapters) {
-        if (mounted) {
-          setState(() {
-            _chapters = chapters;
-          });
-        }
+        if (mounted) setState(() => _chapters = chapters);
       },
       onEpubLoaded: () async {
-        debugPrint('EPUB loaded successfully (first=${ !_epubFullyLoaded })');
-        if (_epubFullyLoaded) return; // Ignore subsequent calls
-        _epubFullyLoaded = true;
+        // Guard: only run resume logic on the very first load.
+        // In continuous scroll mode, onEpubLoaded fires for every
+        // new section/iframe — without this guard, it would snap
+        // the user back to the initial position on every scroll.
+        if (_hasResumedPosition) return;
+        _hasResumedPosition = true;
 
-        // Wait for the EPUB renderer to fully stabilize
-        await Future.delayed(const Duration(milliseconds: 500));
         try {
           await _applyCustomStyles();
-          debugPrint('Custom styles applied');
-        } catch (e) {
-          debugPrint('Failed to apply custom styles: $e');
-        }
-        // Explicitly navigate to the saved CFI after load to ensure
-        // resume works reliably (initialCfi can race with location generation
-        // in scrolled-doc + continuous mode).
-        // Skip navigation if user is actively scrolling to prevent jump-backs.
-        final isUserScrolling = _lastUserScrollTime != null &&
-            DateTime.now().difference(_lastUserScrollTime!).inMilliseconds < _scrollCooldownMs;
-        
-        if (!_hasNavigatedToSavedPosition && 
-            validCfi != null && 
-            validCfi!.isNotEmpty &&
-            !isUserScrolling) {
-          _hasNavigatedToSavedPosition = true;
-          try {
-            debugPrint('Navigating to saved CFI: $validCfi');
-            await Future.delayed(const Duration(milliseconds: 300));
-            _epubController?.display(cfi: validCfi!);
-          } catch (e) {
-            debugPrint('Failed to navigate to saved CFI: $e');
-          }
-        } else if (isUserScrolling) {
-          debugPrint('Skipping navigation to CFI - user is actively scrolling');
-        }
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
+        } catch (_) {}
+
+        if (mounted) setState(() => _isEpubLoading = false);
       },
       onRelocated: (location) {
-        // Track user scroll activity
-        _lastUserScrollTime = DateTime.now();
+        // ──────────────────────────────────────────────────────────
+        // ZERO rebuilds here. Just store values and schedule a save.
+        // ──────────────────────────────────────────────────────────
+        _currentCfi = location.startCfi;
+        _progress = location.progress;
+        _hasDirtyProgress = true;
+        _scheduleSave();
 
-        // Store pending values immediately for later save
-        _pendingCfi = location.startCfi;
-        _pendingProgress = location.progress;
-
-        // Cancel any existing debounce timer
-        _progressDebounceTimer?.cancel();
-
-        // Longer debounce to avoid ghost jumps during active scrolling
-        _progressDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-          if (!mounted || _isSliderDragging) return;
-
-          _lastCfi = _pendingCfi;
-          final newProgress = _pendingProgress;
-
-          // Only update Bloc/UI if progress changed significantly (1%+)
-          // This prevents jitter from tiny scroll adjustments
-          if ((newProgress - _progress).abs() > 0.01) {
-            _progress = newProgress;
-            // Update bloc silently without triggering full rebuild
-            context.read<ReaderBloc>().add(UpdateEpubProgress(
-              cfi: _lastCfi ?? '',
-              progress: newProgress,
-            ));
-            // Only update slider if controls are visible
-            if (_showControls) {
-              setState(() {});
-            }
-          }
-        });
+        // Update the slider only if the control overlay is visible
+        if (_showControls && mounted && !_isSliderDragging) {
+          setState(() {}); // Rebuilds only the overlay, never the cached viewer
+        }
       },
       onTextSelected: (selection) {
         debugPrint('Selected: ${selection.selectedText}');
       },
-      // Handle tap to toggle controls
       onTouchUp: (x, y) {
-        // Tap in the middle 30% of screen toggles controls
-        // x and y are normalized (0.0 to 1.0)
         if (x > 0.35 && x < 0.65 && y > 0.35 && y < 0.65) {
           _toggleControls();
         }
@@ -478,7 +410,7 @@ class _EpubReaderContentState extends State<_EpubReaderContent> {
                     inactiveColor: Colors.white30,
                     onChangeStart: (value) {
                       _isSliderDragging = true;
-                      _progressDebounceTimer?.cancel();
+                      _saveDebounceTimer?.cancel();
                     },
                     onChanged: (value) {
                       setState(() {

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:annas_archive_api/annas_archive_api.dart';
-
+import '../../core/theme/theme_cubit.dart';
 import '../../core/services/store_preload_service.dart';
 import '../../data/repositories/store_repository.dart';
 import '../../data/repositories/book_repository.dart';
@@ -35,7 +35,6 @@ class _StoreContentState extends State<_StoreContent> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   Timer? _debounce;
-  List<Format> _selectedFormats = [Format.pdf, Format.epub];
 
   @override
   void initState() {
@@ -71,7 +70,7 @@ class _StoreContentState extends State<_StoreContent> {
   void _onSearchChanged(String query) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () {
-      context.read<StoreBloc>().add(SearchBooks(query, formats: _selectedFormats));
+      context.read<StoreBloc>().add(SearchBooks(query));
     });
   }
 
@@ -80,11 +79,27 @@ class _StoreContentState extends State<_StoreContent> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Book Store'),
+        actions: [
+          BlocBuilder<ThemeCubit, ThemeState>(
+            builder: (context, state) {
+              return IconButton(
+                icon: Icon(
+                  state.themeMode == ThemeMode.dark
+                      ? Icons.light_mode
+                      : Icons.dark_mode,
+                ),
+                onPressed: () {
+                  context.read<ThemeCubit>().toggleTheme();
+                },
+                tooltip: 'Toggle theme',
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
           _buildSearchBar(),
-          _buildFilterChips(),
           Expanded(child: _buildContent()),
         ],
       ),
@@ -92,142 +107,56 @@ class _StoreContentState extends State<_StoreContent> {
   }
 
   Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: TextField(
         controller: _searchController,
         onChanged: _onSearchChanged,
+        style: Theme.of(context).textTheme.bodyLarge,
         decoration: InputDecoration(
-          hintText: 'Search books...',
-          prefixIcon: const Icon(Icons.search),
+          hintText: 'Search for books, authors...',
+          hintStyle: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          ),
+          prefixIcon: Icon(
+            Icons.search,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           suffixIcon: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (_searchController.text.isNotEmpty)
                 IconButton(
-                  icon: const Icon(Icons.clear),
+                  icon: Icon(
+                    Icons.clear,
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                  ),
                   onPressed: () {
                     _searchController.clear();
                     context.read<StoreBloc>().add(ClearSearch());
                   },
+                  tooltip: 'Clear search',
                 ),
-              IconButton(
-                icon: const Icon(Icons.search),
-                onPressed: () {
-                  if (_searchController.text.isNotEmpty) {
-                    _debounce?.cancel();
-                    context.read<StoreBloc>().add(SearchBooks(_searchController.text, formats: _selectedFormats));
-                  }
-                },
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                child: IconButton(
+                  icon: Icon(
+                    Icons.search,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  onPressed: () {
+                    if (_searchController.text.isNotEmpty) {
+                      _debounce?.cancel();
+                      context.read<StoreBloc>().add(SearchBooks(_searchController.text));
+                    }
+                  },
+                  tooltip: 'Search',
+                ),
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildFilterChips() {
-    return BlocBuilder<StoreBloc, StoreState>(
-      builder: (context, state) {
-        // Sync with bloc state
-        if (state is StoreResults) {
-          _selectedFormats = state.formats;
-        }
-        
-        List<Format> selectedFormats = _selectedFormats;
-        bool searchAnnasArchive = true;
-        bool searchLibgen = true;
-
-        if (state is StoreResults) {
-          searchAnnasArchive = state.searchAnnasArchive;
-          searchLibgen = state.searchLibgen;
-        }
-
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              // Source filters
-              FilterChip(
-                avatar: const Icon(Icons.archive, size: 16),
-                label: const Text("Anna's"),
-                selected: searchAnnasArchive,
-                selectedColor: Colors.purple.withOpacity(0.3),
-                onSelected: (selected) {
-                  if (selected || searchLibgen) {
-                    context.read<StoreBloc>().add(UpdateSourceFilter(
-                      searchAnnasArchive: selected,
-                      searchLibgen: searchLibgen,
-                    ));
-                  }
-                },
-              ),
-              const SizedBox(width: 8),
-              FilterChip(
-                avatar: const Icon(Icons.library_books, size: 16),
-                label: const Text('LibGen'),
-                selected: searchLibgen,
-                selectedColor: Colors.orange.withOpacity(0.3),
-                onSelected: (selected) {
-                  if (selected || searchAnnasArchive) {
-                    context.read<StoreBloc>().add(UpdateSourceFilter(
-                      searchAnnasArchive: searchAnnasArchive,
-                      searchLibgen: selected,
-                    ));
-                  }
-                },
-              ),
-              const SizedBox(width: 16),
-              Container(
-                height: 24,
-                width: 1,
-                color: Colors.grey[300],
-              ),
-              const SizedBox(width: 16),
-              // Format filters
-              FilterChip(
-                label: const Text('PDF'),
-                selected: selectedFormats.contains(Format.pdf),
-                onSelected: (selected) {
-                  final formats = <Format>[...selectedFormats];
-                  if (selected) {
-                    formats.add(Format.pdf);
-                  } else {
-                    formats.remove(Format.pdf);
-                  }
-                  if (formats.isNotEmpty) {
-                    setState(() {
-                      _selectedFormats = formats;
-                    });
-                    context.read<StoreBloc>().add(UpdateFilter(formats));
-                  }
-                },
-              ),
-              const SizedBox(width: 8),
-              FilterChip(
-                label: const Text('EPUB'),
-                selected: selectedFormats.contains(Format.epub),
-                onSelected: (selected) {
-                  final formats = <Format>[...selectedFormats];
-                  if (selected) {
-                    formats.add(Format.epub);
-                  } else {
-                    formats.remove(Format.epub);
-                  }
-                  if (formats.isNotEmpty) {
-                    setState(() {
-                      _selectedFormats = formats;
-                    });
-                    context.read<StoreBloc>().add(UpdateFilter(formats));
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 

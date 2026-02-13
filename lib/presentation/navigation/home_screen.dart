@@ -14,6 +14,25 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateSelectedIndex();
+  }
+
+  void _updateSelectedIndex() {
+    final location = GoRouterState.of(context).uri.toString();
+    setState(() {
+      if (location == '/') {
+        _currentIndex = 0;
+      } else if (location.startsWith('/store')) {
+        _currentIndex = 1;
+      } else if (location.startsWith('/settings')) {
+        _currentIndex = 2;
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: widget.child,
@@ -31,6 +50,9 @@ class _HomeScreenState extends State<HomeScreen> {
             case 1:
               context.go('/store');
               break;
+            case 2:
+              context.go('/settings');
+              break;
           }
         },
         destinations: const [
@@ -43,6 +65,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.store_outlined),
             selectedIcon: Icon(Icons.store),
             label: 'Store',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
           ),
         ],
       ),

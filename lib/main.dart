@@ -4,11 +4,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme/app_theme.dart';
+import 'core/theme/theme_cubit.dart';
 import 'core/services/store_preload_service.dart';
 import 'core/services/cache_config.dart';
 import 'data/models/book_model.dart';
 import 'data/repositories/book_repository.dart';
 import 'data/repositories/store_repository.dart';
+import 'data/repositories/settings_repository.dart';
 import 'presentation/library/bloc/library_bloc.dart';
 import 'presentation/navigation/app_router.dart';
 
@@ -45,6 +47,9 @@ class EReaderApp extends StatelessWidget {
         RepositoryProvider<StoreRepository>(
           create: (_) => StoreRepository(),
         ),
+        RepositoryProvider<SettingsRepository>(
+          create: (_) => SettingsRepository(),
+        ),
       ],
       child: MultiBlocProvider(
         providers: [
@@ -53,14 +58,23 @@ class EReaderApp extends StatelessWidget {
               bookRepository: context.read<BookRepository>(),
             )..add(LoadLibrary()),
           ),
+          BlocProvider<ThemeCubit>(
+            create: (context) => ThemeCubit(
+              settingsRepository: context.read<SettingsRepository>(),
+            ),
+          ),
         ],
-        child: MaterialApp.router(
-          title: 'E-Reader',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: ThemeMode.system,
-          routerConfig: AppRouter.router,
+        child: BlocBuilder<ThemeCubit, ThemeState>(
+          builder: (context, themeState) {
+            return MaterialApp.router(
+              title: 'E-Reader',
+              debugShowCheckedModeBanner: false,
+              theme: AppTheme.lightTheme,
+              darkTheme: AppTheme.darkTheme,
+              themeMode: themeState.themeMode,
+              routerConfig: AppRouter.router,
+            );
+          },
         ),
       ),
     );

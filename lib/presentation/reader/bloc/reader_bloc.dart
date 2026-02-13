@@ -79,25 +79,10 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
   ) {
     if (_currentBook == null) return;
 
-    // Only update if progress changed significantly (avoid rebuilds on tiny changes)
-    final progressDiff = (event.progress - _progress).abs();
-    if (progressDiff < 0.005 && event.cfi == _cfi) {
-      return; // Skip update for tiny changes
-    }
-
+    // Just store progress internally — do NOT emit state.
+    // Emitting here causes BlocConsumer rebuilds which trigger ghost jumps.
     _cfi = event.cfi;
     _progress = event.progress;
-
-    // Only emit state if progress changed by 1% or more to prevent UI jitter
-    if (progressDiff >= 0.01) {
-      emit(ReaderLoaded(
-        book: _currentBook!,
-        currentPage: _currentPage,
-        totalPages: _totalPages,
-        progress: _progress,
-        cfi: _cfi,
-      ));
-    }
   }
 
   Future<void> _onSaveProgress(
@@ -133,7 +118,6 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
       ));
     } catch (e) {
       // Silently fail - don't interrupt reading
-      print('Failed to save progress: $e');
     }
   }
 

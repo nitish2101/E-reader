@@ -69,7 +69,9 @@ class StoreResults extends StoreState {
     if (selectedFormats.length >= 2) return allBooks; // Show all if both selected
     
     return allBooks.where((book) {
-      final ext = book.extension?.toLowerCase() ?? '';
+      final ext = book.extension?.toLowerCase()?.trim() ?? '';
+      // Exclude books with unknown format when user selected specific format
+      if (ext.isEmpty) return false;
       if (selectedFormats.contains(Format.pdf) && ext == 'pdf') return true;
       if (selectedFormats.contains(Format.epub) && ext == 'epub') return true;
       return false;

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -19,7 +20,8 @@ class LibraryBloc extends Bloc<LibraryEvent, LibraryState> {
     on<DeleteBook>(_onDeleteBook);
     on<RefreshLibrary>(_onRefreshLibrary);
 
-    _booksSubscription = bookRepository.watchBooks.listen((_) {
+    _booksSubscription = bookRepository.watchBooks.listen((event) {
+      debugPrint('📚 Hive watch event detected - refreshing library');
       add(RefreshLibrary());
     });
   }
@@ -85,6 +87,8 @@ class LibraryBloc extends Bloc<LibraryEvent, LibraryState> {
   ) async {
     try {
       final books = bookRepository.getAllBooks();
+      debugPrint('Library refreshed: ${books.length} books loaded');
+      // Force emit even if books list looks the same - book properties may have changed
       emit(LibraryLoaded(books));
     } catch (e) {
       emit(LibraryError('Failed to refresh library: $e'));

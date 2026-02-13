@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../library/library_screen.dart';
 import '../store/store_screen.dart';
+import '../settings/settings_screen.dart';
 import '../reader/pdf_reader_screen.dart';
 import '../reader/epub_reader_screen.dart';
 import '../reader/bloc/reader_bloc.dart';
@@ -30,6 +31,12 @@ class AppRouter {
               child: StoreScreen(),
             ),
           ),
+          GoRoute(
+            path: '/settings',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: SettingsScreen(),
+            ),
+          ),
         ],
       ),
       // Reader routes (outside shell for fullscreen)
@@ -49,12 +56,7 @@ class AppRouter {
         path: '/reader/epub/:bookId',
         builder: (context, state) {
           final bookId = state.pathParameters['bookId']!;
-          return BlocProvider(
-            create: (context) => ReaderBloc(
-              bookRepository: context.read<BookRepository>(),
-            )..add(LoadBook(bookId)),
-            child: EpubReaderScreen(bookId: bookId),
-          );
+          return EpubReaderScreen(bookId: bookId);
         },
       ),
     ],
