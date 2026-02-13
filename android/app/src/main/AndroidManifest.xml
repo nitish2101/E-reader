@@ -13,7 +13,7 @@
     <application
         android:label="E-Reader"
         android:name="${applicationName}"
-        android:icon="@drawable/launch_background"
+        android:icon="@mipmap/launcher_icon"
         android:usesCleartextTraffic="true">
         
         <activity

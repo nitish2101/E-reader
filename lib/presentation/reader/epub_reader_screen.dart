@@ -7,6 +7,7 @@ import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:hive/hive.dart';
 
 import '../../data/repositories/book_repository.dart';
+import 'widgets/dictionary_dialog.dart';
 
 /// EPUB reader screen — completely Bloc-free during reading.
 ///
@@ -41,6 +42,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   // Live progress — local only, zero Bloc interaction
   double _progress = 0.0;
   String? _currentCfi;
+  String? _currentSelection; // Stores current text selection
   bool _hasDirtyProgress = false;
   bool _hasResumedPosition = false; // Guard: navigate to saved CFI only once
 
@@ -284,6 +286,31 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         theme: _getTheme(),
         fontSize: _fontSize,
       ),
+      selectionContextMenu: ContextMenu(
+        menuItems: [
+          ContextMenuItem(
+            id: 1,
+            title: "Define",
+          ),
+        ],
+        settings: ContextMenuSettings(hideDefaultSystemContextMenuItems: false),
+        onContextMenuActionItemClicked: (item) {
+          if (item.id == 1) {
+            final text = _currentSelection;
+            if (text != null && text.trim().isNotEmpty && mounted) {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent, // For glassmorphism
+                builder: (context) => DictionaryDialog(word: text.trim()),
+              );
+            }
+          }
+        },
+      ),
+      onSelection: (text, cfi, rect, viewRect) {
+        _currentSelection = text;
+      },
       onChaptersLoaded: (chapters) {
         if (mounted) setState(() => _chapters = chapters);
       },
