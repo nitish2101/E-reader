@@ -41,6 +41,8 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
       final books = await storeRepository.searchBooks(
         query: event.query,
         formats: event.formats,
+        searchAnnasArchive: true,
+        searchLibgen: false, // LibGen disabled
       );
 
       // Apply format filtering to the results
@@ -53,8 +55,10 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
         hasMore: books.isNotEmpty,
         formats: event.formats,
         page: 1,
+        searchAnnasArchive: true,
+        searchLibgen: true,
       ));
-    } catch (e) {
+    } catch (e, stackTrace) {
       emit(StoreError(message: 'Search failed: $e', query: event.query));
     }
   }
@@ -64,9 +68,19 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
     if (formats.length >= 2) return books; // Show all if both selected
     
     return books.where((book) {
-      final ext = book.extension?.toLowerCase() ?? '';
-      if (formats.contains(Format.pdf) && ext == 'pdf') return true;
-      if (formats.contains(Format.epub) && ext == 'epub') return true;
+      final ext = book.extension?.toLowerCase()?.trim() ?? '';
+      
+      // If no extension info, EXCLUDE it — user picked a specific format
+      if (ext.isEmpty) return false;
+      
+      // Strict match against selected formats
+      for (final format in formats) {
+        final formatStr = format.toString().split('.').last.toLowerCase(); // 'pdf' or 'epub'
+        if (ext == formatStr) {
+          return true;
+        }
+      }
+      
       return false;
     }).toList();
   }
@@ -293,9 +307,9 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
     // If preloading is still in progress, wait a bit and check again
     if (StorePreloadService.instance.isLoading) {
       emit(StoreSearching('popular fiction'));
-      
-      // Wait for up to 5 seconds for preloading to complete
-      for (var i = 0; i < 10; i++) {
+
+      // Wait for up to 10 seconds for preloading to complete
+      for (var i = 0; i < 20; i++) {
         await Future.delayed(const Duration(milliseconds: 500));
         final books = StorePreloadService.instance.getCachedBooks();
         if (books != null && books.isNotEmpty) {
@@ -307,6 +321,10 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
             page: 1,
           ));
           return;
+        }
+        // If preloading has finished but no books were found, stop waiting
+        if (!StorePreloadService.instance.isLoading) {
+          break;
         }
       }
     }

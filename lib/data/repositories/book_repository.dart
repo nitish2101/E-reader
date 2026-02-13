@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -77,7 +78,6 @@ class BookRepository {
 
       return book;
     } catch (e) {
-      print('Error importing book: $e');
       return null;
     }
   }
@@ -116,7 +116,10 @@ class BookRepository {
     int? totalPages,
   }) async {
     final book = getBook(bookId);
-    if (book == null) return;
+    if (book == null) {
+      debugPrint('⚠️ updateReadingProgress: Book $bookId not found');
+      return;
+    }
 
     book.lastReadPage = page;
     book.lastReadProgress = progress;
@@ -125,6 +128,7 @@ class BookRepository {
 
     // Use put() instead of save() so Hive.watch() fires and the library refreshes
     await _booksBox.put(book.id, book);
+    debugPrint('📖 Progress updated: ${book.title} -> ${(progress * 100).toStringAsFixed(1)}% (CFI: ${cfi?.substring(0, 30) ?? 'none'})');
   }
 
   /// Delete a book from library
@@ -139,7 +143,7 @@ class BookRepository {
         await file.delete();
       }
     } catch (e) {
-      print('Error deleting book file: $e');
+      // Silently fail - file might already be deleted
     }
 
     // Remove from Hive

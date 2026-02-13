@@ -83,6 +83,15 @@ migrate_working_dir/
 *.tmp
 *.temp
 
+# Session/context files (AI-generated, not source code)
+CONTEXT.md
+SESSION_CONTEXT.md
+UI_IMPROVEMENTS.md
+app_logs.txt
+
+# DevTools config
+devtools_options.yaml
+
 # Development tools
 development/
 

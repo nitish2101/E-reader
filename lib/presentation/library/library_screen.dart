@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/theme/theme_cubit.dart';
 import '../../data/models/book_model.dart';
 import 'bloc/library_bloc.dart';
 import 'widgets/library_grid.dart';
@@ -15,6 +16,21 @@ class LibraryScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('My Library'),
         actions: [
+          BlocBuilder<ThemeCubit, ThemeState>(
+            builder: (context, state) {
+              return IconButton(
+                icon: Icon(
+                  state.themeMode == ThemeMode.dark
+                      ? Icons.light_mode
+                      : Icons.dark_mode,
+                ),
+                onPressed: () {
+                  context.read<ThemeCubit>().toggleTheme();
+                },
+                tooltip: 'Toggle theme',
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () {

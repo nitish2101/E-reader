@@ -29,6 +29,7 @@ class StorePreloadService {
         query: 'popular fiction',
         searchAnnasArchive: true,
         searchLibgen: true,
+        timeout: const Duration(seconds: 45),
       );
 
       _cachedBooks = books;
