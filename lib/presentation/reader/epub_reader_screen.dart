@@ -299,15 +299,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           await _applyCustomStyles();
         } catch (_) {}
 
-        // Navigate to saved CFI after layout stabilises.
-        // initialCfi alone is unreliable in scrolled+continuous mode.
-        if (_initialCfi != null && _initialCfi!.isNotEmpty) {
-          try {
-            await Future.delayed(const Duration(milliseconds: 600));
-            await _epubController?.display(cfi: _initialCfi!);
-          } catch (_) {}
-        }
-
         if (mounted) setState(() => _isEpubLoading = false);
       },
       onRelocated: (location) {
