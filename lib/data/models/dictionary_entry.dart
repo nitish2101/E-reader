@@ -1,3 +1,4 @@
+
 class DictionaryEntry {
   final String word;
   final String? phonetic;
@@ -14,11 +15,13 @@ class DictionaryEntry {
   factory DictionaryEntry.fromJson(Map<String, dynamic> json) {
     return DictionaryEntry(
       word: json['word'] ?? '',
-      phonetic: json['phonetic'] ?? json['phonetics']?.firstWhere((e) => e['text'] != null, orElse: () => {})?['text'],
+      phonetic: json['phonetic'],
       meanings: (json['meanings'] as List?)
           ?.map((e) => Meaning.fromJson(e))
           .toList() ?? [],
-      sourceUrls: (json['sourceUrls'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      sourceUrls: (json['sourceUrls'] as List?)
+          ?.map((e) => e.toString())
+          .toList() ?? [],
     );
   }
 }
@@ -27,7 +30,10 @@ class Meaning {
   final String partOfSpeech;
   final List<Definition> definitions;
 
-  Meaning({required this.partOfSpeech, required this.definitions});
+  Meaning({
+    required this.partOfSpeech,
+    required this.definitions,
+  });
 
   factory Meaning.fromJson(Map<String, dynamic> json) {
     return Meaning(
@@ -43,7 +49,10 @@ class Definition {
   final String definition;
   final String? example;
 
-  Definition({required this.definition, this.example});
+  Definition({
+    required this.definition,
+    this.example,
+  });
 
   factory Definition.fromJson(Map<String, dynamic> json) {
     return Definition(

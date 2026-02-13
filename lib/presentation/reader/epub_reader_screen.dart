@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:hive/hive.dart';
-
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' hide ContextMenu;
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
+import 'package:ereader/presentation/reader/widgets/dictionary_dialog.dart';
 import '../../data/repositories/book_repository.dart';
 import 'widgets/dictionary_dialog.dart';
 
@@ -57,6 +59,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   bool _isSliderDragging = false;
   List<EpubChapter> _chapters = [];
   Widget? _cachedEpubViewer; // Cached to prevent ANY rebuilds
+  String? _currentSelection; // Stores current text selection
 
   // Settings
   int _fontSize = 18;
