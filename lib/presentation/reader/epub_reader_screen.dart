@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:hive/hive.dart';
-
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' hide ContextMenu;
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
+import 'package:ereader/presentation/reader/widgets/dictionary_dialog.dart';
 import '../../data/repositories/book_repository.dart';
 
 /// EPUB reader screen — completely Bloc-free during reading.
@@ -53,6 +55,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   bool _isSliderDragging = false;
   List<EpubChapter> _chapters = [];
   Widget? _cachedEpubViewer; // Cached to prevent ANY rebuilds
+  String? _currentSelection; // Stores current text selection
 
   // Settings
   int _fontSize = 18;
@@ -284,6 +287,30 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         theme: _getTheme(),
         fontSize: _fontSize,
       ),
+      selectionContextMenu: inapp.ContextMenu(
+        menuItems: [
+          inapp.ContextMenuItem(
+            id: 1,
+            title: "Define",
+          ),
+        ],
+        settings: inapp.ContextMenuSettings(hideDefaultSystemContextMenuItems: false),
+        onContextMenuActionItemClicked: (item) {
+          if (item.id == 1) {
+            final text = _currentSelection;
+            if (text != null && text.trim().isNotEmpty && mounted) {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                builder: (context) => DictionaryDialog(word: text.trim()),
+              );
+            }
+          }
+        },
+      ),
+      onSelection: (text, cfi, rect, viewRect) {
+        _currentSelection = text;
+      },
       onChaptersLoaded: (chapters) {
         if (mounted) setState(() => _chapters = chapters);
       },
