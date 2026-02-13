@@ -45,8 +45,14 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
         searchLibgen: false, // LibGen disabled
       );
 
+      print('[StoreBloc] API returned ${books.length} books');
+      for (final book in books) {
+        print('[StoreBloc]   - "${book.title}" format: ${book.extension}');
+      }
+
       // Apply format filtering to the results
       final filteredBooks = _filterBooksByFormat(books, event.formats);
+      print('[StoreBloc] After filtering: ${filteredBooks.length} books (formats: ${ event.formats})');
 
       emit(StoreResults(
         query: event.query,
@@ -294,12 +300,17 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
     // First check if we have cached books
     final cachedBooks = StorePreloadService.instance.getCachedBooks();
     if (cachedBooks != null && cachedBooks.isNotEmpty) {
+      // Filter cached books by preferred format
+      final filteredBooks = _filterBooksByFormat(cachedBooks, event.formats);
+      print('[StoreBloc] LoadCachedBooks: ${cachedBooks.length} cached, ${filteredBooks.length} after filter (formats: ${event.formats})');
+      
       emit(StoreResults(
         query: 'popular fiction',
-        books: cachedBooks,
+        books: filteredBooks,
         allBooks: cachedBooks,
         hasMore: true,
         page: 1,
+        formats: event.formats,
       ));
       return;
     }
@@ -313,12 +324,16 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
         await Future.delayed(const Duration(milliseconds: 500));
         final books = StorePreloadService.instance.getCachedBooks();
         if (books != null && books.isNotEmpty) {
+          // Filter cached books by preferred format
+          final filteredBooks = _filterBooksByFormat(books, event.formats);
+          
           emit(StoreResults(
             query: 'popular fiction',
-            books: books,
+            books: filteredBooks,
             allBooks: books,
             hasMore: true,
             page: 1,
+            formats: event.formats,
           ));
           return;
         }

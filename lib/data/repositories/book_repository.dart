@@ -128,7 +128,7 @@ class BookRepository {
 
     // Use put() instead of save() so Hive.watch() fires and the library refreshes
     await _booksBox.put(book.id, book);
-    debugPrint('📖 Progress updated: ${book.title} -> ${(progress * 100).toStringAsFixed(1)}% (CFI: ${cfi?.substring(0, 30) ?? 'none'})');
+    debugPrint('📖 Progress updated: ${book.title} -> ${(progress * 100).toStringAsFixed(1)}% (CFI: ${cfi != null && cfi.length > 30 ? cfi.substring(0, 30) : cfi ?? 'none'})');
   }
 
   /// Delete a book from library
