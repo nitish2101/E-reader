@@ -131,7 +131,7 @@ class BookCard extends StatelessWidget {
 
   Widget _buildCover(BuildContext context) {
     // Check for local cover
-    if (book.localCoverPath != null) {
+    if (book.localCoverPath != null && File(book.localCoverPath!).existsSync()) {
       return Image.file(
         File(book.localCoverPath!),
         fit: BoxFit.cover,
@@ -143,7 +143,8 @@ class BookCard extends StatelessWidget {
     }
 
     // Check for network cover
-    if (book.coverUrl != null) {
+    // ignore: unnecessary_null_comparison
+    if (book.coverUrl != null && book.coverUrl!.isNotEmpty) {
       return CachedNetworkImage(
         imageUrl: book.coverUrl!,
         fit: BoxFit.cover,
