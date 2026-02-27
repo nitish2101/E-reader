@@ -59,7 +59,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   bool _isSliderDragging = false;
   List<EpubChapter> _chapters = [];
   Widget? _cachedEpubViewer; // Cached to prevent ANY rebuilds
-  String? _currentSelection; // Stores current text selection
+
 
   // Settings
   int _fontSize = 18;
@@ -364,6 +364,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         // ──────────────────────────────────────────────────────────
         // ZERO rebuilds here. Just store values and schedule a save.
         // ──────────────────────────────────────────────────────────
+        // Prevent overwriting progress with 0.0 during initialization
+        if (_isEpubLoading) return;
+
         _currentCfi = location.startCfi;
         _progress = location.progress;
         _hasDirtyProgress = true;

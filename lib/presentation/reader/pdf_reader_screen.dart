@@ -21,6 +21,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   PdfViewerController? _controller;
   Timer? _autoSaveTimer;
   bool _showControls = true;
+  bool _isInitializing = true;
   int _currentPage = 1;
   int _totalPages = 0;
   bool _isDarkMode = false;
@@ -166,20 +167,22 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           if (initialPage > 0 && initialPage <= _totalPages) {
             await controller.goToPage(pageNumber: initialPage);
           }
+
+          _isInitializing = false;
           
           if (mounted) setState(() {});
         },
         onPageChanged: (pageNumber) {
-          if (mounted) {
-            setState(() {
-              _currentPage = pageNumber ?? 1;
-            });
-            
-            context.read<ReaderBloc>().add(UpdatePdfProgress(
-              currentPage: _currentPage,
-              totalPages: _totalPages,
-            ));
-          }
+          if (_isInitializing || !mounted) return;
+
+          setState(() {
+            _currentPage = pageNumber ?? 1;
+          });
+          
+          context.read<ReaderBloc>().add(UpdatePdfProgress(
+            currentPage: _currentPage,
+            totalPages: _totalPages,
+          ));
         },
       ),
     );

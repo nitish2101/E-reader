@@ -52,6 +52,14 @@
 - Cached network images for performance
 - Tablet-optimized interface
 
+### 6. Dictionary & Definitions
+- Built-in dictionary lookup for selected text
+- Powered by Free Dictionary API (api.dictionaryapi.dev)
+- Offline-capable definition caching (future scope)
+- Context menu integration in EPUB reader
+- Glassmorphic definition dialog
+
+
 ---
 
 ## Technology Stack
@@ -116,10 +124,12 @@ Ereader/
 │   ├── data/                         # Data layer
 │   │   ├── models/                   # Data models
 │   │   │   ├── book_model.dart       # Book entity with Hive annotations
-│   │   │   └── book_model.g.dart     # Generated Hive adapter
+│   │   │   ├── book_model.g.dart     # Generated Hive adapter
+│   │   │   └── dictionary_entry.dart # Dictionary data model
 │   │   └── repositories/             # Data access
 │   │       ├── book_repository.dart  # Local book CRUD operations
-│   │       └── store_repository.dart # Book store API integration
+│   │       ├── store_repository.dart # Book store API integration
+│   │       └── dictionary_repository.dart # Dictionary API integration
 │   └── presentation/                 # UI layer
 │       ├── navigation/               # Routing & navigation
 │       │   ├── app_router.dart       # GoRouter configuration
@@ -144,6 +154,8 @@ Ereader/
 │       └── reader/                   # Reading feature
 │           ├── pdf_reader_screen.dart   # PDF reading UI
 │           ├── epub_reader_screen.dart  # EPUB reading UI
+│           ├── widgets/
+│           │   └── dictionary_dialog.dart # Definition popup
 │           └── bloc/                 # Reader state management
 │               ├── reader_bloc.dart
 │               ├── reader_event.dart
@@ -207,6 +219,9 @@ The app follows **BLoC pattern** with **clean architecture** principles:
   - Search books
   - Download books
   - Parse metadata
+- **DictionaryRepository**: Fetches word definitions
+  - Integrates with Free Dictionary API
+  - Parsing of phonetics, meanings, and examples
 
 #### 3. BLoC State Management
 Each feature has dedicated BLoC:
@@ -456,5 +471,5 @@ Storage permissions required for Android. Consider scoped storage for Android 11
 
 ---
 
-*Last Updated: February 12, 2026*
+*Last Updated: February 13, 2026*
 *Generated from project analysis*
