@@ -39,6 +39,17 @@ class SettingsRepository {
     await _box.put(_searchLibgenKey, value);
   }
 
+  bool getSearchGutenberg() => _box.get('search_gutenberg', defaultValue: true);
+
+  Future<void> setSearchGutenberg(bool value) =>
+      _box.put('search_gutenberg', value);
+
+  bool getSearchStandardEbooks() =>
+      _box.get('search_standard_ebooks', defaultValue: true);
+
+  Future<void> setSearchStandardEbooks(bool value) =>
+      _box.put('search_standard_ebooks', value);
+
   // Auto-save Reading Progress
   bool getAutoSaveProgress() {
     return _box.get(_autoSaveProgressKey, defaultValue: true);

@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../library/library_screen.dart';
@@ -6,9 +5,6 @@ import '../store/store_screen.dart';
 import '../settings/settings_screen.dart';
 import '../reader/pdf_reader_screen.dart';
 import '../reader/epub_reader_screen.dart';
-import '../reader/bloc/reader_bloc.dart';
-import '../../data/repositories/book_repository.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'home_screen.dart';
 
 class AppRouter {
@@ -21,21 +17,18 @@ class AppRouter {
         routes: [
           GoRoute(
             path: '/',
-            pageBuilder: (context, state) => const NoTransitionPage(
-              child: LibraryScreen(),
-            ),
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: LibraryScreen()),
           ),
           GoRoute(
             path: '/store',
-            pageBuilder: (context, state) => const NoTransitionPage(
-              child: StoreScreen(),
-            ),
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: StoreScreen()),
           ),
           GoRoute(
             path: '/settings',
-            pageBuilder: (context, state) => const NoTransitionPage(
-              child: SettingsScreen(),
-            ),
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: SettingsScreen()),
           ),
         ],
       ),
@@ -44,12 +37,7 @@ class AppRouter {
         path: '/reader/pdf/:bookId',
         builder: (context, state) {
           final bookId = state.pathParameters['bookId']!;
-          return BlocProvider(
-            create: (context) => ReaderBloc(
-              bookRepository: context.read<BookRepository>(),
-            )..add(LoadBook(bookId)),
-            child: PdfReaderScreen(bookId: bookId),
-          );
+          return PdfReaderScreen(bookId: bookId);
         },
       ),
       GoRoute(

@@ -8,6 +8,8 @@ class StoreBookCard extends StatelessWidget {
   final UnifiedBook book;
   final VoidCallback onDownload;
   final bool isDownloading;
+  final bool isDownloaded;
+  final VoidCallback? onCancel;
   final double downloadProgress;
 
   const StoreBookCard({
@@ -15,6 +17,8 @@ class StoreBookCard extends StatelessWidget {
     required this.book,
     required this.onDownload,
     this.isDownloading = false,
+    this.isDownloaded = false,
+    this.onCancel,
     this.downloadProgress = 0,
   });
 
@@ -23,7 +27,7 @@ class StoreBookCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 4,
-      shadowColor: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+      shadowColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -43,11 +47,11 @@ class StoreBookCard extends StatelessWidget {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: _getFormatColor().withOpacity(0.9),
+                      color: _getFormatColor().withValues(alpha: 0.9),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      (book.extension ?? 'PDF').toUpperCase(),
+                      book.extension.toUpperCase(),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -67,12 +71,12 @@ class StoreBookCard extends StatelessWidget {
                     ),
                     decoration: BoxDecoration(
                       color: book.source == BookSource.annasArchive
-                          ? Colors.purple.withOpacity(0.9)
-                          : Colors.orange.withOpacity(0.9),
+                          ? Colors.purple.withValues(alpha: 0.9)
+                          : Colors.orange.withValues(alpha: 0.9),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      book.source == BookSource.annasArchive ? 'AA' : 'LG',
+                      _sourceBadge,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 9,
@@ -90,12 +94,16 @@ class StoreBookCard extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           CircularProgressIndicator(
-                            value: downloadProgress > 0 ? downloadProgress : null,
+                            value: downloadProgress > 0
+                                ? downloadProgress
+                                : null,
                             color: Colors.white,
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '${(downloadProgress * 100).toInt()}%',
+                            downloadProgress > 0
+                                ? '${(downloadProgress * 100).toInt()}%'
+                                : 'Connecting…',
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -116,19 +124,19 @@ class StoreBookCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    book.title ?? 'Unknown Title',
+                    book.title,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                      fontWeight: FontWeight.w600,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    book.author ?? 'Unknown Author',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[600],
-                        ),
+                    book.author,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -139,9 +147,22 @@ class StoreBookCard extends StatelessWidget {
                       SizedBox(
                         height: 32,
                         child: FilledButton.icon(
-                          onPressed: isDownloading ? null : onDownload,
-                          icon: const Icon(Icons.download, size: 16),
-                          label: const Text('Get'),
+                          onPressed: isDownloading ? onCancel : onDownload,
+                          icon: Icon(
+                            isDownloading
+                                ? Icons.close
+                                : isDownloaded
+                                ? Icons.library_books
+                                : Icons.download,
+                            size: 16,
+                          ),
+                          label: Text(
+                            isDownloading
+                                ? 'Cancel'
+                                : isDownloaded
+                                ? 'Library'
+                                : 'Get',
+                          ),
                           style: FilledButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             textStyle: const TextStyle(fontSize: 12),
@@ -176,14 +197,14 @@ class StoreBookCard extends StatelessWidget {
   }
 
   Widget _buildPlaceholderCover(BuildContext context) {
-    final isPdf = book.extension?.toLowerCase() == 'pdf';
+    final isPdf = book.extension.toLowerCase() == 'pdf';
     final isAnnasArchive = book.source == BookSource.annasArchive;
-    
+
     // Source-specific gradient colors
     final List<Color> gradientColors = isAnnasArchive
         ? [Colors.purple[300]!, Colors.purple[700]!]
         : [Colors.orange[300]!, Colors.orange[700]!];
-    
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -200,11 +221,11 @@ class StoreBookCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                isAnnasArchive ? 'AA' : 'LG',
+                _sourceBadge,
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12,
@@ -216,13 +237,13 @@ class StoreBookCard extends StatelessWidget {
             Icon(
               isPdf ? Icons.picture_as_pdf : Icons.book,
               size: 40,
-              color: Colors.white.withOpacity(0.9),
+              color: Colors.white.withValues(alpha: 0.9),
             ),
             const SizedBox(height: 12),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
-                book.title ?? 'Book',
+                book.title,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Colors.white,
@@ -241,16 +262,16 @@ class StoreBookCard extends StatelessWidget {
   }
 
   Color _getFormatColor() {
-    final ext = book.extension?.toLowerCase() ?? '';
+    final ext = book.extension.toLowerCase();
     if (ext == 'pdf') return Colors.red;
     if (ext == 'epub') return Colors.blue;
     return Colors.grey;
   }
 
-  String _formatSize(String size) {
-    final bytes = int.tryParse(size) ?? 0;
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
+  String get _sourceBadge => switch (book.source) {
+    BookSource.annasArchive => 'AA',
+    BookSource.libgen => 'LG',
+    BookSource.gutenberg => 'PG',
+    BookSource.standardEbooks => 'SE',
+  };
 }

@@ -24,14 +24,16 @@ class LibraryGrid extends StatelessWidget {
     final crossAxisCount = screenWidth > 1200
         ? 6
         : screenWidth > 900
-            ? 5
-            : screenWidth > 600
-                ? 4
-                : 3;
+        ? 5
+        : screenWidth > 600
+        ? 4
+        : 3;
 
     return GridView.builder(
       padding: const EdgeInsets.all(16),
       // Add caching for better performance
+      // Retain compatibility with Flutter 3.41, the minimum supported version.
+      // ignore: deprecated_member_use
       cacheExtent: 200,
       // Use builder with findChildIndexCallback for better performance with large lists
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -68,21 +70,21 @@ class EmptyLibraryView extends StatelessWidget {
           Icon(
             Icons.library_books_outlined,
             size: 120,
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
           ),
           const SizedBox(height: 24),
           Text(
             'Your Library is Empty',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           Text(
             'Import books or browse the store to get started',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Colors.grey[600],
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: Colors.grey[600]),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),

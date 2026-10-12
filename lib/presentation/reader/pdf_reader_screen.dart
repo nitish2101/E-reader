@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -18,6 +17,7 @@ class PdfReaderScreen extends StatefulWidget {
 }
 
 class _PdfReaderScreenState extends State<PdfReaderScreen> {
+  late final ReaderBloc _readerBloc;
   PdfViewerController? _controller;
   Timer? _autoSaveTimer;
   bool _showControls = true;
@@ -29,23 +29,25 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   @override
   void initState() {
     super.initState();
+    _readerBloc = ReaderBloc(bookRepository: context.read<BookRepository>())
+      ..add(LoadBook(widget.bookId));
     // Hide system UI for immersive reading
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    
+
     // Auto-save every 5 seconds
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      context.read<ReaderBloc>().add(SaveProgress());
+      _readerBloc.add(SaveProgress());
     });
   }
 
   @override
   void dispose() {
     // Save progress before closing
-    context.read<ReaderBloc>().add(SaveProgress());
-    
+    unawaited(_readerBloc.close());
+
     // Restore system UI
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    
+
     _autoSaveTimer?.cancel();
     super.dispose();
   }
@@ -58,10 +60,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => ReaderBloc(
-        bookRepository: context.read<BookRepository>(),
-      )..add(LoadBook(widget.bookId)),
+    return BlocProvider.value(
+      value: _readerBloc,
       child: BlocBuilder<ReaderBloc, ReaderState>(
         builder: (context, state) {
           if (state is ReaderLoading) {
@@ -77,7 +77,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                    const Icon(
+                      Icons.error_outline,
+                      size: 64,
+                      color: Colors.red,
+                    ),
                     const SizedBox(height: 16),
                     Text(state.message),
                   ],
@@ -129,7 +133,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     );
   }
 
-  Widget _buildPdfViewer(BuildContext context, String filePath, int initialPage) {
+  Widget _buildPdfViewer(
+    BuildContext context,
+    String filePath,
+    int initialPage,
+  ) {
     final viewer = PdfViewer.file(
       filePath,
       controller: _controller,
@@ -144,12 +152,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           final pageLayouts = <Rect>[];
           double y = params.margin;
           // Find max width for document size
-          final maxWidth = pages.fold(0.0, (prev, page) => prev > page.width ? prev : page.width);
+          final maxWidth = pages.fold(
+            0.0,
+            (prev, page) => prev > page.width ? prev : page.width,
+          );
           for (final page in pages) {
             final x = (maxWidth - page.width) / 2 + params.margin;
-            pageLayouts.add(
-              Rect.fromLTWH(x, y, page.width, page.height),
-            );
+            pageLayouts.add(Rect.fromLTWH(x, y, page.width, page.height));
             y += page.height + params.margin;
           }
           return PdfPageLayout(
@@ -158,18 +167,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           );
         },
         margin: 8,
-        backgroundColor: _isDarkMode ? Colors.white : Theme.of(context).scaffoldBackgroundColor,
+        backgroundColor: _isDarkMode
+            ? Colors.white
+            : Theme.of(context).scaffoldBackgroundColor,
         onViewerReady: (document, controller) async {
           _controller = controller;
           _totalPages = document.pages.length;
-          
+
           // Jump to last read page
           if (initialPage > 0 && initialPage <= _totalPages) {
             await controller.goToPage(pageNumber: initialPage);
           }
 
           _isInitializing = false;
-          
+
           if (mounted) setState(() {});
         },
         onPageChanged: (pageNumber) {
@@ -178,11 +189,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           setState(() {
             _currentPage = pageNumber ?? 1;
           });
-          
-          context.read<ReaderBloc>().add(UpdatePdfProgress(
-            currentPage: _currentPage,
-            totalPages: _totalPages,
-          ));
+
+          _readerBloc.add(
+            UpdatePdfProgress(
+              currentPage: _currentPage,
+              totalPages: _totalPages,
+            ),
+          );
         },
       ),
     );
@@ -190,15 +203,31 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     if (_isDarkMode) {
       return ColorFiltered(
         colorFilter: const ColorFilter.matrix([
-          -1,  0,  0, 0, 255,
-           0, -1,  0, 0, 255,
-           0,  0, -1, 0, 255,
-           0,  0,  0, 1,   0,
+          -1,
+          0,
+          0,
+          0,
+          255,
+          0,
+          -1,
+          0,
+          0,
+          255,
+          0,
+          0,
+          -1,
+          0,
+          255,
+          0,
+          0,
+          0,
+          1,
+          0,
         ]),
         child: viewer,
       );
     }
-    
+
     return viewer;
   }
 
@@ -215,19 +244,19 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           child: GestureDetector(
             onTap: _toggleControls,
             child: Container(
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black54,
-                    Colors.transparent,
-                  ],
+                  colors: [Colors.black54, Colors.transparent],
                 ),
               ),
               child: SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   child: Row(
                     children: [
                       IconButton(
@@ -265,7 +294,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
   Widget _buildBottomBar(BuildContext context) {
     final progress = _totalPages > 0 ? _currentPage / _totalPages : 0.0;
-    
+
     return Positioned(
       bottom: 0,
       left: 0,
@@ -278,14 +307,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           child: GestureDetector(
             onTap: _toggleControls,
             child: Container(
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
-                  colors: [
-                    Colors.black54,
-                    Colors.transparent,
-                  ],
+                  colors: [Colors.black54, Colors.transparent],
                 ),
               ),
               child: SafeArea(

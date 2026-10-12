@@ -26,7 +26,7 @@ class BookModel extends HiveObject {
   final String format; // 'pdf' or 'epub'
 
   @HiveField(7)
-  final int totalPages;
+  int totalPages;
 
   @HiveField(8)
   int lastReadPage;
@@ -49,6 +49,9 @@ class BookModel extends HiveObject {
   @HiveField(14)
   final int? fileSize; // In bytes
 
+  @HiveField(15)
+  final String? storeBookId;
+
   BookModel({
     required this.id,
     required this.title,
@@ -65,18 +68,19 @@ class BookModel extends HiveObject {
     DateTime? addedTime,
     this.md5,
     this.fileSize,
-  })  : lastReadTime = lastReadTime ?? DateTime.now(),
-        addedTime = addedTime ?? DateTime.now();
+    this.storeBookId,
+  }) : lastReadTime = lastReadTime ?? DateTime.now(),
+       addedTime = addedTime ?? DateTime.now();
 
   bool get isPdf => format.toLowerCase() == 'pdf';
   bool get isEpub => format.toLowerCase() == 'epub';
-  
+
   String get readingPercentage {
     final percent = lastReadProgress * 100;
     if (percent == 0) return '0';
     return percent.toStringAsFixed(1);
   }
-  
+
   bool get hasStartedReading => lastReadPage > 0 || lastReadProgress > 0;
 
   BookModel copyWith({
@@ -95,6 +99,7 @@ class BookModel extends HiveObject {
     DateTime? addedTime,
     String? md5,
     int? fileSize,
+    String? storeBookId,
   }) {
     return BookModel(
       id: id ?? this.id,
@@ -112,6 +117,7 @@ class BookModel extends HiveObject {
       addedTime: addedTime ?? this.addedTime,
       md5: md5 ?? this.md5,
       fileSize: fileSize ?? this.fileSize,
+      storeBookId: storeBookId ?? this.storeBookId,
     );
   }
 }

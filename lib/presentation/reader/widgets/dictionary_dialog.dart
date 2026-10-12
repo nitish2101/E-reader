@@ -1,6 +1,5 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../data/models/dictionary_entry.dart';
 import '../../../data/repositories/dictionary_repository.dart';
 
@@ -21,11 +20,13 @@ class DictionaryDialog extends StatelessWidget {
         child: Container(
           height: height,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             border: Border(
               top: BorderSide(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: 0.1),
                 width: 1,
               ),
             ),
@@ -38,7 +39,9 @@ class DictionaryDialog extends StatelessWidget {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -55,7 +58,9 @@ class DictionaryDialog extends StatelessWidget {
                           child: Text(
                             'Error: ${snapshot.error}',
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: Theme.of(context).colorScheme.error),
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
                           ),
                         ),
                       );
@@ -79,70 +84,108 @@ class DictionaryDialog extends StatelessWidget {
                           children: [
                             Text(
                               entry.word,
-                              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                              style: Theme.of(context).textTheme.headlineMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             if (entry.phonetic != null)
                               Padding(
-                                padding: const EdgeInsets.only(top: 4, bottom: 16),
+                                padding: const EdgeInsets.only(
+                                  top: 4,
+                                  bottom: 16,
+                                ),
                                 child: Text(
                                   entry.phonetic!,
-                                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                        color: Theme.of(context).colorScheme.primary,
+                                  style: Theme.of(context).textTheme.bodyLarge
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
                                         fontStyle: FontStyle.italic,
                                       ),
                                 ),
                               ),
                             const Divider(),
-                            ...entry.meanings.map((meaning) => Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        meaning.partOfSpeech,
-                                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      ...meaning.definitions.map((def) => Padding(
-                                            padding: const EdgeInsets.only(bottom: 8.0),
-                                            child: Row(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                const Text("• "),
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                                    children: [
-                                                      Text(
-                                                        def.definition,
-                                                        style: Theme.of(context).textTheme.bodyMedium,
-                                                      ),
-                                                      if (def.example != null)
-                                                        Padding(
-                                                          padding: const EdgeInsets.only(top: 4),
-                                                          child: Text(
-                                                            '"${def.example}"',
-                                                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                                                                  fontStyle: FontStyle.italic,
-                                                                ),
-                                                          ),
-                                                        ),
-                                                    ],
+                            ...entry.meanings.map(
+                              (meaning) => Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8.0,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      meaning.partOfSpeech,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    ...meaning.definitions.map(
+                                      (def) => Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 8.0,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text("• "),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    def.definition,
+                                                    style: Theme.of(
+                                                      context,
+                                                    ).textTheme.bodyMedium,
                                                   ),
-                                                ),
-                                              ],
+                                                  if (def.example != null)
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            top: 4,
+                                                          ),
+                                                      child: Text(
+                                                        '"${def.example}"',
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall
+                                                            ?.copyWith(
+                                                              color:
+                                                                  Theme.of(
+                                                                        context,
+                                                                      )
+                                                                      .colorScheme
+                                                                      .onSurface
+                                                                      .withValues(
+                                                                        alpha:
+                                                                            0.6,
+                                                                      ),
+                                                              fontStyle:
+                                                                  FontStyle
+                                                                      .italic,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
                                             ),
-                                          )),
-                                    ],
-                                  ),
-                                )),
-                            if (index < entries.length - 1) const Divider(height: 32),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (index < entries.length - 1)
+                              const Divider(height: 32),
                           ],
                         );
                       },

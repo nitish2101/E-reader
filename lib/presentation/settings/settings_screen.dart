@@ -3,6 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/theme_cubit.dart';
 import '../../data/repositories/settings_repository.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import '../../data/repositories/store_repository.dart';
+import '../../core/services/cache_config.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -10,13 +12,11 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
           // Theme Section
-          _SectionHeader(
+          const _SectionHeader(
             icon: Icons.palette_outlined,
             title: 'Appearance',
           ),
@@ -24,7 +24,7 @@ class SettingsScreen extends StatelessWidget {
           const Divider(indent: 16, endIndent: 16),
 
           // Store Settings Section
-          _SectionHeader(
+          const _SectionHeader(
             icon: Icons.store_outlined,
             title: 'Store & Search',
           ),
@@ -33,7 +33,7 @@ class SettingsScreen extends StatelessWidget {
           const Divider(indent: 16, endIndent: 16),
 
           // Reader Settings Section
-          _SectionHeader(
+          const _SectionHeader(
             icon: Icons.auto_stories_outlined,
             title: 'Reading',
           ),
@@ -41,13 +41,10 @@ class SettingsScreen extends StatelessWidget {
           const Divider(indent: 16, endIndent: 16),
 
           // About Section
-          _SectionHeader(
-            icon: Icons.info_outline,
-            title: 'About',
-          ),
+          const _SectionHeader(icon: Icons.info_outline, title: 'About'),
           _AboutTile(),
           _ClearCacheTile(),
-          
+
           const SizedBox(height: 32),
         ],
       ),
@@ -59,10 +56,7 @@ class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final String title;
 
-  const _SectionHeader({
-    required this.icon,
-    required this.title,
-  });
+  const _SectionHeader({required this.icon, required this.title});
 
   @override
   Widget build(BuildContext context) {
@@ -70,18 +64,14 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
       child: Row(
         children: [
-          Icon(
-            icon,
-            size: 20,
-            color: Theme.of(context).colorScheme.primary,
-          ),
+          Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 8),
           Text(
             title,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.primary,
+            ),
           ),
         ],
       ),
@@ -152,23 +142,46 @@ class _ThemeSettingTile extends StatelessWidget {
 class _SearchSourcesTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(
-        Icons.archive,
-        color: Colors.purple[400],
-      ),
-      title: const Text('Search Source'),
-      subtitle: const Text('Using Anna\'s Archive'),
-      trailing: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.purple.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Text(
-          'Active',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
+    final settings = context.read<SettingsRepository>();
+    return ValueListenableBuilder(
+      valueListenable: Hive.box('settings').listenable(),
+      builder: (context, box, _) => Column(
+        children: [
+          for (final source in BookSource.values)
+            SwitchListTile(
+              title: Text(source.label),
+              subtitle:
+                  source == BookSource.gutenberg ||
+                      source == BookSource.standardEbooks
+                  ? const Text('Classic books with direct EPUB downloads')
+                  : null,
+              value: switch (source) {
+                BookSource.annasArchive => settings.getSearchAnnasArchive(),
+                BookSource.libgen => settings.getSearchLibgen(),
+                BookSource.gutenberg => settings.getSearchGutenberg(),
+                BookSource.standardEbooks => settings.getSearchStandardEbooks(),
+              },
+              onChanged: (value) {
+                final enabled = [
+                  settings.getSearchAnnasArchive(),
+                  settings.getSearchLibgen(),
+                  settings.getSearchGutenberg(),
+                  settings.getSearchStandardEbooks(),
+                ];
+                if (!value && enabled.where((v) => v).length == 1) return;
+                switch (source) {
+                  case BookSource.annasArchive:
+                    settings.setSearchAnnasArchive(value);
+                  case BookSource.libgen:
+                    settings.setSearchLibgen(value);
+                  case BookSource.gutenberg:
+                    settings.setSearchGutenberg(value);
+                  case BookSource.standardEbooks:
+                    settings.setSearchStandardEbooks(value);
+                }
+              },
+            ),
+        ],
       ),
     );
   }
@@ -193,14 +206,8 @@ class _PreferredFormatTile extends StatelessWidget {
           subtitle: Text('Default: ${format.toUpperCase()}'),
           trailing: SegmentedButton<String>(
             segments: const [
-              ButtonSegment(
-                value: 'pdf',
-                label: Text('PDF'),
-              ),
-              ButtonSegment(
-                value: 'epub',
-                label: Text('EPUB'),
-              ),
+              ButtonSegment(value: 'pdf', label: Text('PDF')),
+              ButtonSegment(value: 'epub', label: Text('EPUB')),
             ],
             selected: {format},
             onSelectionChanged: (Set<String> selected) {
@@ -249,12 +256,12 @@ class _AboutTile extends StatelessWidget {
         color: Theme.of(context).colorScheme.primary,
       ),
       title: const Text('About E-Reader'),
-      subtitle: const Text('Version 1.0.0'),
+      subtitle: const Text('Version 1.2.0'),
       onTap: () {
         showAboutDialog(
           context: context,
           applicationName: 'E-Reader',
-          applicationVersion: '1.0.0',
+          applicationVersion: '1.2.0',
           applicationIcon: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -272,21 +279,23 @@ class _AboutTile extends StatelessWidget {
             const SizedBox(height: 16),
             const Text(
               'A modern e-reader app for Android that supports PDF and EPUB formats. '
-              'Search and download books from Anna\'s Archive and LibGen.',
+              'Search and download books from Anna\'s Archive, LibGen, and Project Gutenberg.',
             ),
             const SizedBox(height: 16),
             Text(
               'Features:',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
-            const Text('• PDF & EPUB reader\n'
-                '• Multiple book sources\n'
-                '• Reading progress tracking\n'
-                '• Dark & Light themes\n'
-                '• Offline library management'),
+            const Text(
+              '• PDF & EPUB reader\n'
+              '• Multiple book sources\n'
+              '• Reading progress tracking\n'
+              '• Dark & Light themes\n'
+              '• Offline library management',
+            ),
           ],
         );
       },
@@ -322,10 +331,13 @@ class _ClearCacheTile extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error,
                 ),
-                onPressed: () {
-                  // TODO: Implement cache clearing
+                onPressed: () async {
+                  final store = context.read<StoreRepository>();
+                  final messenger = ScaffoldMessenger.of(context);
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  store.clearCache();
+                  await BookCoverCacheManager().emptyCache();
+                  messenger.showSnackBar(
                     const SnackBar(
                       content: Text('Cache cleared successfully'),
                       duration: Duration(seconds: 2),

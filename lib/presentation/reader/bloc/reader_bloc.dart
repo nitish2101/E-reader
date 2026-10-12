@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 
@@ -22,10 +23,7 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
     on<SaveProgress>(_onSaveProgress);
   }
 
-  Future<void> _onLoadBook(
-    LoadBook event,
-    Emitter<ReaderState> emit,
-  ) async {
+  Future<void> _onLoadBook(LoadBook event, Emitter<ReaderState> emit) async {
     emit(ReaderLoading());
 
     try {
@@ -35,19 +33,30 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
         return;
       }
 
+      if (!await File(book.localPath).exists()) {
+        emit(
+          const ReaderError(
+            'This book file is missing. Import or download it again.',
+          ),
+        );
+        return;
+      }
+      if (emit.isDone) return;
       _currentBook = book;
       _currentPage = book.lastReadPage;
       _progress = book.lastReadProgress;
       _cfi = book.lastReadCfi;
       _totalPages = book.totalPages;
 
-      emit(ReaderLoaded(
-        book: book,
-        currentPage: _currentPage,
-        totalPages: _totalPages,
-        progress: _progress,
-        cfi: _cfi,
-      ));
+      emit(
+        ReaderLoaded(
+          book: book,
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          progress: _progress,
+          cfi: _cfi,
+        ),
+      );
     } catch (e) {
       emit(ReaderError('Failed to load book: $e'));
     }
@@ -61,16 +70,18 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
 
     _currentPage = event.currentPage;
     _totalPages = event.totalPages;
-    _progress = event.totalPages > 0 
-        ? event.currentPage / event.totalPages 
+    _progress = event.totalPages > 0
+        ? event.currentPage / event.totalPages
         : 0.0;
 
-    emit(ReaderLoaded(
-      book: _currentBook!,
-      currentPage: _currentPage,
-      totalPages: _totalPages,
-      progress: _progress,
-    ));
+    emit(
+      ReaderLoaded(
+        book: _currentBook!,
+        currentPage: _currentPage,
+        totalPages: _totalPages,
+        progress: _progress,
+      ),
+    );
   }
 
   void _onUpdateEpubProgress(
@@ -100,32 +111,36 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
         totalPages: _totalPages,
       );
 
-      emit(ProgressSaved(
-        book: _currentBook!,
-        currentPage: _currentPage,
-        totalPages: _totalPages,
-        progress: _progress,
-        cfi: _cfi,
-      ));
+      emit(
+        ProgressSaved(
+          book: _currentBook!,
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          progress: _progress,
+          cfi: _cfi,
+        ),
+      );
 
       // Return to loaded state
-      emit(ReaderLoaded(
-        book: _currentBook!,
-        currentPage: _currentPage,
-        totalPages: _totalPages,
-        progress: _progress,
-        cfi: _cfi,
-      ));
+      emit(
+        ReaderLoaded(
+          book: _currentBook!,
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          progress: _progress,
+          cfi: _cfi,
+        ),
+      );
     } catch (e) {
       // Silently fail - don't interrupt reading
     }
   }
 
   @override
-  Future<void> close() {
+  Future<void> close() async {
     // Save progress when closing
     if (_currentBook != null) {
-      bookRepository.updateReadingProgress(
+      await bookRepository.updateReadingProgress(
         bookId: _currentBook!.id,
         page: _currentPage,
         progress: _progress,
@@ -133,6 +148,6 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
         totalPages: _totalPages,
       );
     }
-    return super.close();
+    await super.close();
   }
 }

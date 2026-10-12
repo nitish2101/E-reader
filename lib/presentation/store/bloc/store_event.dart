@@ -1,62 +1,54 @@
 part of 'store_bloc.dart';
 
-abstract class StoreEvent extends Equatable {
+abstract class StoreEvent {
   const StoreEvent();
-
-  @override
-  List<Object?> get props => [];
 }
 
 class SearchBooks extends StoreEvent {
   final String query;
-  final List<Format> formats;
-
-  const SearchBooks(this.query, {this.formats = const [Format.pdf, Format.epub]});
-
-  @override
-  List<Object?> get props => [query, formats];
+  final bool debounce;
+  final bool forceRefresh;
+  const SearchBooks(
+    this.query, {
+    this.debounce = false,
+    this.forceRefresh = false,
+  });
 }
 
-class LoadMoreResults extends StoreEvent {}
+class LoadPopularBooks extends StoreEvent {
+  const LoadPopularBooks();
+}
 
-class ClearSearch extends StoreEvent {}
+class LoadMoreResults extends StoreEvent {
+  const LoadMoreResults();
+}
 
-class DownloadBook extends StoreEvent {
-  final UnifiedBook book;
-
-  const DownloadBook(this.book);
-
-  @override
-  List<Object?> get props => [book];
+class ClearSearch extends StoreEvent {
+  const ClearSearch();
 }
 
 class UpdateFilter extends StoreEvent {
-  final List<Format> formats;
-
+  final Set<Format> formats;
   const UpdateFilter(this.formats);
-
-  @override
-  List<Object?> get props => [formats];
 }
 
 class UpdateSourceFilter extends StoreEvent {
-  final bool searchAnnasArchive;
-  final bool searchLibgen;
-
-  const UpdateSourceFilter({
-    required this.searchAnnasArchive,
-    required this.searchLibgen,
-  });
-
-  @override
-  List<Object?> get props => [searchAnnasArchive, searchLibgen];
+  final Set<BookSource> sources;
+  const UpdateSourceFilter(this.sources);
 }
 
-class LoadCachedBooks extends StoreEvent {
-  final List<Format> formats;
-  
-  const LoadCachedBooks({this.formats = const [Format.pdf, Format.epub]});
-  
-  @override
-  List<Object?> get props => [formats];
+class DownloadBook extends StoreEvent {
+  final UnifiedBook book;
+  const DownloadBook(this.book);
+}
+
+class CancelDownload extends StoreEvent {
+  final String bookId;
+  const CancelDownload(this.bookId);
+}
+
+class UseBrowserResults extends StoreEvent {
+  final String query;
+  final StoreSearchResult result;
+  const UseBrowserResults(this.query, this.result);
 }

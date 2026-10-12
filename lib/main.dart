@@ -1,11 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_cubit.dart';
-import 'core/services/store_preload_service.dart';
 import 'core/services/cache_config.dart';
 import 'data/models/book_model.dart';
 import 'data/repositories/book_repository.dart';
@@ -15,7 +13,6 @@ import 'presentation/library/bloc/library_bloc.dart';
 import 'presentation/navigation/app_router.dart';
 
 void main() async {
-  HttpOverrides.global = MyHttpOverrides();
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Hive
@@ -27,10 +24,6 @@ void main() async {
   // Configure caching for better performance
   initializeCacheConfig();
 
-  // Preload store data in background immediately (non-blocking)
-  // Don't wait for UI, start fetching right away
-  StorePreloadService.instance.preloadStoreData();
-
   runApp(const EReaderApp());
 }
 
@@ -41,12 +34,8 @@ class EReaderApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
-        RepositoryProvider<BookRepository>(
-          create: (_) => BookRepository(),
-        ),
-        RepositoryProvider<StoreRepository>(
-          create: (_) => StoreRepository(),
-        ),
+        RepositoryProvider<BookRepository>(create: (_) => BookRepository()),
+        RepositoryProvider<StoreRepository>(create: (_) => StoreRepository()),
         RepositoryProvider<SettingsRepository>(
           create: (_) => SettingsRepository(),
         ),
@@ -54,9 +43,9 @@ class EReaderApp extends StatelessWidget {
       child: MultiBlocProvider(
         providers: [
           BlocProvider<LibraryBloc>(
-            create: (context) => LibraryBloc(
-              bookRepository: context.read<BookRepository>(),
-            )..add(LoadLibrary()),
+            create: (context) =>
+                LibraryBloc(bookRepository: context.read<BookRepository>())
+                  ..add(LoadLibrary()),
           ),
           BlocProvider<ThemeCubit>(
             create: (context) => ThemeCubit(
@@ -78,13 +67,5 @@ class EReaderApp extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class MyHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
   }
 }

@@ -20,18 +20,20 @@ class BookCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Memoize computed values to avoid rebuild overhead
-    final formatColor = book.isPdf 
-        ? Colors.red.withOpacity(0.9) 
-        : Colors.blue.withOpacity(0.9);
+    final formatColor = book.isPdf
+        ? Colors.red.withValues(alpha: 0.9)
+        : Colors.blue.withValues(alpha: 0.9);
     final formatText = book.format.toUpperCase();
-    
+
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
       child: Card(
         clipBehavior: Clip.antiAlias,
         elevation: 2,
-        shadowColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+        shadowColor: Theme.of(
+          context,
+        ).colorScheme.primary.withValues(alpha: 0.2),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -71,7 +73,9 @@ class BookCard extends StatelessWidget {
                       left: 0,
                       right: 0,
                       child: LinearProgressIndicator(
-                        value: book.lastReadProgress < 0.01 ? 0.01 : book.lastReadProgress,
+                        value: book.lastReadProgress < 0.01
+                            ? 0.01
+                            : book.lastReadProgress,
                         backgroundColor: Colors.black26,
                         valueColor: AlwaysStoppedAnimation<Color>(
                           Theme.of(context).colorScheme.primary,
@@ -94,8 +98,8 @@ class BookCard extends StatelessWidget {
                       child: Text(
                         book.title,
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                          fontWeight: FontWeight.w600,
+                        ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -103,9 +107,9 @@ class BookCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       book.author,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey[600],
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -114,9 +118,9 @@ class BookCard extends StatelessWidget {
                       Text(
                         '${book.readingPercentage}% complete',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                              fontWeight: FontWeight.w500,
-                            ),
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ],
@@ -131,7 +135,8 @@ class BookCard extends StatelessWidget {
 
   Widget _buildCover(BuildContext context) {
     // Check for local cover
-    if (book.localCoverPath != null && File(book.localCoverPath!).existsSync()) {
+    if (book.localCoverPath != null &&
+        File(book.localCoverPath!).existsSync()) {
       return Image.file(
         File(book.localCoverPath!),
         fit: BoxFit.cover,
@@ -180,7 +185,7 @@ class BookCard extends StatelessWidget {
             Icon(
               book.isPdf ? Icons.picture_as_pdf : Icons.book,
               size: 48,
-              color: Colors.white.withOpacity(0.8),
+              color: Colors.white.withValues(alpha: 0.8),
             ),
             const SizedBox(height: 8),
             Padding(
@@ -206,9 +211,7 @@ class BookCard extends StatelessWidget {
   Widget _buildLoadingCover(BuildContext context) {
     return Container(
       color: Colors.grey[200],
-      child: const Center(
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
+      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
     );
   }
 }
