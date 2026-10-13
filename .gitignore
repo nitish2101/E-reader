@@ -113,6 +113,7 @@ screenshot_*.jpg
 # Generated files
 *.g.dart
 !lib/data/models/book_model.g.dart
+!third_party/**/*.g.dart
 *.freezed.dart
 *.mocks.dart
 

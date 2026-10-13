@@ -24,7 +24,10 @@ class _TestWebViewPlatform extends InAppWebViewPlatform {
 }
 
 class _TestWebView extends PlatformInAppWebViewWidget {
-  _TestWebView(super.params) : super.implementation();
+  _TestWebView(super.params) : super.implementation() {
+    latest = params;
+  }
+  static PlatformInAppWebViewWidgetCreationParams? latest;
 
   @override
   Widget build(BuildContext context) => const SizedBox.expand();
@@ -46,7 +49,11 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
   final completed = Completer<CallAsyncJavaScriptResult?>();
   Map<String, dynamic>? seekArguments;
   Map<String, dynamic>? snapshot;
+  Completer<dynamic>? pendingSnapshot;
+  int snapshotCalls = 0;
   Map<String, dynamic>? restoreArguments;
+  int selectionCalls = 0;
+  bool restoreSucceeds = true;
   final handlers = <String, JavaScriptHandlerCallback>{};
 
   @override
@@ -61,7 +68,16 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
   Future<dynamic> evaluateJavascript({
     required String source,
     ContentWorld? contentWorld,
-  }) async => source.startsWith('window._ereaderSnapshot ?') ? snapshot : true;
+  }) async {
+    if (source.contains('checkSelection')) selectionCalls++;
+    if (source.startsWith('window._ereaderSnapshot ?')) {
+      snapshotCalls++;
+      final pending = pendingSnapshot;
+      pendingSnapshot = null;
+      return pending == null ? snapshot : pending.future;
+    }
+    return true;
+  }
 
   @override
   Future<CallAsyncJavaScriptResult?> callAsyncJavaScript({
@@ -71,7 +87,7 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
   }) {
     if (functionBody.contains("_ereaderRestoreOffset")) {
       restoreArguments = arguments;
-      return Future.value(CallAsyncJavaScriptResult(value: true));
+      return Future.value(CallAsyncJavaScriptResult(value: restoreSucceeds));
     }
     if (functionBody.contains("_ereaderSnapshot")) {
       return Future.value(CallAsyncJavaScriptResult(value: snapshot));
@@ -121,6 +137,7 @@ void main() {
   Future<EpubViewer> open(
     WidgetTester tester, {
     bool ready = true,
+    bool showControls = true,
     _SeekWebViewController? native,
   }) async {
     await tester.runAsync(() async {
@@ -147,6 +164,7 @@ void main() {
       viewer.onLocationLoaded?.call();
       await tester.pump();
     }
+    if (!showControls) return viewer;
     await tester.tapAt(const Offset(400, 300));
     // Older reader gets its tap notification from the native WebView.
     if (find.byType(Slider).evaluate().isEmpty) {
@@ -567,7 +585,7 @@ void main() {
         });
         expect(books.get('book')!.lastReadProgress, 0.63);
         expect(books.get('book')!.lastReadCfi, location(0.63).startCfi);
-        expect(Hive.box('settings').get('epubViewport:book')['offset'], -9.5);
+        expect(books.get('book')!.epubCheckpoint!['offset'], -9.5);
         tester.binding.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
         );
@@ -591,7 +609,217 @@ void main() {
         expect(native.restoreArguments, {
           'cfi': books.get('book')!.lastReadCfi,
           'offset': -9.5,
+          'layout': null,
         });
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+  testWidgets('periodic checkpoint samples scrolling with controls hidden', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      await tester.tapAt(const Offset(400, 300));
+      native.snapshot = {
+        ...location(0.67).toJson(),
+        'sequence': 8,
+        'offset': -12.0,
+      };
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(seconds: 6));
+        await books.flush();
+      });
+      expect(books.get('book')!.lastReadProgress, 0.67);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  for (final closing in [true, false]) {
+    testWidgets(
+      '${closing ? 'close' : 'background'} resamples after an overlapping older capture',
+      (tester) async {
+        try {
+          final native = _SeekWebViewController();
+          await open(tester, native: native);
+          final pending = Completer<dynamic>();
+          native.pendingSnapshot = pending;
+          await tester.runAsync(() async {
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.inactive,
+            );
+            expect(native.snapshotCalls, 1);
+            if (closing) {
+              tester
+                  .widget<IconButton>(
+                    find.widgetWithIcon(IconButton, Icons.arrow_back),
+                  )
+                  .onPressed!();
+            } else {
+              tester.binding.handleAppLifecycleStateChanged(
+                AppLifecycleState.paused,
+              );
+            }
+            native.snapshot = {
+              ...location(0.72).toJson(),
+              'sequence': 3,
+              'offset': -7.0,
+            };
+            pending.complete({
+              ...location(0.3).toJson(),
+              'sequence': 2,
+              'offset': -3.0,
+            });
+            await Future<void>.delayed(const Duration(milliseconds: 30));
+            await books.flush();
+          });
+          expect(native.snapshotCalls, 2);
+          expect(books.get('book')!.lastReadProgress, 0.72);
+          expect(books.get('book')!.epubCheckpoint!['offset'], -7.0);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        } finally {
+          await close(tester);
+        }
+      },
+    );
+  }
+
+  testWidgets('stalled opening offers recovery without removing viewer', (
+    tester,
+  ) async {
+    try {
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          RepositoryProvider.value(
+            value: repository,
+            child: const MaterialApp(home: EpubReaderScreen(bookId: 'book')),
+          ),
+        );
+        await tester
+            .widget<EpubViewer>(find.byType(EpubViewer))
+            .epubSource
+            .epubData;
+        await Future<void>.delayed(const Duration(seconds: 16));
+      });
+      await tester.pump();
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Return to library'), findsOneWidget);
+      expect(find.byType(EpubViewer), findsOneWidget);
+      final first = tester.widget<EpubViewer>(find.byType(EpubViewer));
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+      expect(
+        identical(
+          first.epubController,
+          tester.widget<EpubViewer>(find.byType(EpubViewer)).epubController,
+        ),
+        isFalse,
+      );
+      first.onRelocated!(location(0.9));
+      await close(tester);
+      expect(books.get('book')!.lastReadProgress, 0.2);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets(
+    'closing immediately after long press cancels delayed selection work',
+    (tester) async {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      _TestWebView.latest!.onWebViewCreated!(
+        InAppWebViewController.fromPlatform(platform: native),
+      );
+      _TestWebView.latest!.onLongPressHitTestResult!(
+        InAppWebViewController.fromPlatform(platform: native),
+        InAppWebViewHitTestResult(
+          type: InAppWebViewHitTestResultType.UNKNOWN_TYPE,
+        ),
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 11));
+      expect(native.selectionCalls, 0);
+    },
+  );
+  testWidgets('reflow events cannot replace the confirmed passage', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      native.handlers['ereaderRelocated']!([
+        {...location(0.4).toJson(), 'sequence': 1, 'offset': -6.0},
+      ]);
+      native.handlers['ereaderReflow']!([true]);
+      native.handlers['ereaderRelocated']!([
+        {...location(0.9).toJson(), 'sequence': 2, 'offset': 200.0},
+      ]);
+      native.snapshot = {...location(0.9).toJson(), 'sequence': 3};
+      await tester.runAsync(() async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        await books.flush();
+      });
+      expect(books.get('book')!.lastReadProgress, 0.4);
+      expect(books.get('book')!.epubCheckpoint!['offset'], -6.0);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      native.handlers['ereaderReflow']!([false]);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets(
+    'renderer recovery creates fresh viewers and stops after two attempts',
+    (tester) async {
+      try {
+        var viewer = await open(tester);
+        final original = viewer;
+        for (var attempt = 0; attempt < 2; attempt++) {
+          viewer.onRendererTerminated!();
+          await tester.pump();
+          await tester.pump();
+          final next = tester.widget<EpubViewer>(find.byType(EpubViewer));
+          expect(
+            identical(next.epubController, viewer.epubController),
+            isFalse,
+          );
+          viewer = next;
+        }
+        original.onRelocated!(location(0.99));
+        viewer.onRendererTerminated!();
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(EpubViewer), findsNothing);
+        expect(find.text('Retry'), findsOneWidget);
+        expect(books.get('book')!.lastReadProgress, 0.2);
+        await tester.tap(find.text('Retry'));
+        await tester.pump();
+        expect(find.byType(EpubViewer), findsOneWidget);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+  testWidgets(
+    'failed initial restoration retains the saved checkpoint and exposes retry',
+    (tester) async {
+      try {
+        final native = _SeekWebViewController()..restoreSucceeds = false;
+        final viewer = await open(tester, native: native, showControls: false);
+        viewer.onRelocated!(location(0.95));
+        native.snapshot = {...location(0.95).toJson(), 'sequence': 9};
+        expect(find.text('Retry'), findsOneWidget);
+        await close(tester);
+        expect(books.get('book')!.lastReadProgress, 0.2);
+        expect(books.get('book')!.lastReadCfi, 'epubcfi(/6/2!/4/2/1:0)');
       } finally {
         await close(tester);
       }
