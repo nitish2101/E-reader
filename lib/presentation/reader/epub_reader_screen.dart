@@ -51,6 +51,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Map<String, dynamic>? _initialViewportLayout;
   Timer? _periodicCheckpoint;
   Timer? _openingTimer;
+  Timer? _reflowTimer;
   bool _openingStalled = false;
   bool _isReflowing = false;
   bool _typographyChangePending = false;
@@ -121,6 +122,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   /// Load book from Hive — instant, no async needed
   void _loadBookData() {
+    // Retry loads a new checkpoint, which may have no reusable viewport data.
+    _initialViewportOffset = null;
+    _initialViewportLayout = null;
     final book = _bookRepository.getBook(widget.bookId);
     if (book == null) {
       setState(() => _loadError = 'Book not found');
@@ -192,6 +196,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     _saveDebounceTimer?.cancel();
     _periodicCheckpoint?.cancel();
     _openingTimer?.cancel();
+    _reflowTimer?.cancel();
     _viewerGeneration++;
     unawaited(_saveProgressNow());
     _progressView.dispose();
@@ -410,6 +415,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             return;
           }
           _isReflowing = args.isNotEmpty && args.first == true;
+          if (_isReflowing) {
+            _startReflowTimer(generation);
+          } else {
+            _reflowTimer?.cancel();
+            _reflowTimer = null;
+          }
           _publishProgress();
         },
       );
@@ -562,8 +573,28 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     });
   }
 
+  void _startReflowTimer(int generation) {
+    // Initial opening retains its slow-load controls and may still complete.
+    // Only an already-open reader gets a fatal reflow recovery deadline.
+    if (_isEpubLoading || _isPreparingLocationBridge || _reflowTimer != null) {
+      return;
+    }
+    _reflowTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted &&
+          generation == _viewerGeneration &&
+          _isReflowing &&
+          !_rendererFailed) {
+        _showViewerError(
+          'Text layout is taking too long. Retry to restore your last checkpoint.',
+        );
+      }
+    });
+  }
+
   void _showViewerError(String message) {
     _saveDebounceTimer?.cancel();
+    _reflowTimer?.cancel();
+    _reflowTimer = null;
     setState(() {
       _loadError = message;
       _rendererFailed = true;
@@ -588,6 +619,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   );
 
   Future<void> _recoverRenderer() async {
+    _reflowTimer?.cancel();
+    _reflowTimer = null;
     setState(() {
       _rendererFailed = true;
       _viewerGeneration++;
@@ -614,6 +647,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Future<void> _retryViewer() async {
+    _reflowTimer?.cancel();
+    _reflowTimer = null;
     // Invalidate old native callbacks before any asynchronous write.
     _viewerGeneration++;
     _rendererFailed = true;
@@ -670,7 +705,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             arguments: {'size': size},
           )
           .timeout(const Duration(seconds: 10));
-      if (!mounted || generation != _viewerGeneration) return;
+      if (!mounted || generation != _viewerGeneration || _rendererFailed) {
+        return;
+      }
       if (result?.error != null || result?.value != true) {
         throw StateError('Reflow failed');
       }
@@ -925,6 +962,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           _openingStalled = false;
           _loadError = null;
         });
+        if (_isReflowing) _startReflowTimer(generation);
         _publishProgress();
         if (_locationsReady) unawaited(_refreshLocation());
       },

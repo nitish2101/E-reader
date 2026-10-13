@@ -47,7 +47,7 @@ selection calls after disposal; the patched behavior makes zero such calls.
 The malformed-book native check initially reached only watchdog recovery;
 catching the promise returned by `book.open` now reports its actual parsing error.
 
-Final `flutter analyze`: no issues. Final `flutter test`: 83 passed, three
+Initial PR `flutter analyze`: no issues. Initial PR `flutter test`: 83 passed, three
 opt-in network tests skipped. The standalone actual-bridge regression also
 passes: `node --test test/reader/epub_location_bridge_test.js`.
 It executes the shipped JavaScript through a minimal EPUB.js surface, exercises
@@ -55,7 +55,7 @@ resize during active reflow followed by reading a later passage and another
 resize, and fails against the pre-fix resize wrapper (expected later anchor B,
 restored stale A). Flutter overlap regressions verify close/background sample
 again after an older in-flight capture instead of merely joining it.
-Final normal-entry-point `flutter build apk --debug --no-pub`: successful;
+Initial PR normal-entry-point `flutter build apk --debug --no-pub`: successful;
 APK metadata confirms `com.ereader.app`, version 1.2.0 (3). SHA-256:
 `9a68a2d79eb15087860ae46aa7c474c36dd45949efabe7449ba86d0aaba1b19a`.
 Artifact: `build/app/outputs/flutter-apk/app-debug.apk` (ignored).
@@ -122,4 +122,39 @@ An abrupt process exit may lose reading since the last completed checkpoint
 Layout changes preserve the passage near the viewport top, rather than reusing
 incompatible pixels. PDF checkpoints are page-granular. Dictionary selection and
 Define code paths are preserved, but external dictionary responses were not
-verified by this work. No deployment, push, or merge into main is part of this task.
+verified by this work. Changes are published for PR review; this chat does not
+merge main.
+
+## PR review follow-up
+
+Review reproduced two retry payload defects: seek confirmation followed by
+immediate renderer exit passed the new CFI with the previous generation's
+−47.25-pixel offset/layout; a replacement payload with an offset but no layout
+retained its previous layout. Reload now clears both initial viewport fields
+before accepting only matching checkpoint metadata. Two widget regressions
+failed on the original code and pass with this reset.
+
+Automatic resize could also leave chapter display pending indefinitely, with
+snapshots blocked and no recovery controls. A native-handler watchdog now
+exposes Retry/Return after ten seconds of reflow in an already-open reader.
+Repeated resize notifications do not extend that deadline. Completion cancels
+it; errors, renderer recovery, retry, and disposal cancel it. Timed-out viewers
+remain fenced off, so a late display result cannot save intermediate text or
+publish successful typography settings. Initial opening retains its separate
+15-second slow-load controls and continues loading.
+
+The widget regression failed before the watchdog (no Retry control) and now
+verifies timeout recovery, late-event rejection, and preservation of the last
+confirmed checkpoint. Additional cases verify successful reflow cancels its
+deadline and slow initial restoration can finish. The Node harness executes
+the actual bridge with a deliberately pending display promise and confirms it
+keeps the old snapshot and blocks intermediate saves.
+
+This follow-up is verified through Flutter/Node regressions and an Android
+build: analysis clean, 88 Flutter tests passed (three opt-in network tests
+skipped), both actual-bridge Node tests passed, normal Android debug APK built.
+The APK identifies as `com.ereader.app` version 1.2.0 (3), SHA-256
+`530da92706c17ca78fb244bc99a263afec0650d3de821b6fd7d37ddab3045180`.
+The native emulator measurements above apply to the earlier PR tree;
+the added watchdog and retry-reset cases have not been rerun on an emulator or
+physical device. Publication is for PR review; main is not merged here.

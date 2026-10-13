@@ -12,7 +12,7 @@ const dartSource = fs.readFileSync(
 );
 const script = dartSource.match(/const epubLocationBridgeScript = r'''([\s\S]*?)''';/)[1];
 
-function createViewer() {
+function createViewer(display = async () => {}) {
   let currentCfi = 'epubcfi(A)';
   const displays = [];
   const chapterDocument = { body: {} };
@@ -55,7 +55,7 @@ function createViewer() {
         getBoundingClientRect: () => ({ top: 0 }),
       }),
       on: () => {},
-      display: async (cfi) => { displays.push(cfi); },
+      display: async (cfi) => { displays.push(cfi); await display(cfi); },
       reportLocation: () => {},
     },
   };
@@ -86,4 +86,19 @@ test('resize during reflow cannot retain a stale anchor for a later resize', asy
   assert.equal(viewer.bridge._ereaderLastConfirmed.startCfi, 'epubcfi(B)');
   assert.equal(viewer.displays.at(-1), 'epubcfi(B)');
   assert.equal(viewer.bridge._ereaderBusy, false);
+});
+
+test('pending resize display keeps the confirmed snapshot and blocks transient saves', async () => {
+  const viewer = createViewer(() => new Promise(() => {}));
+  viewer.read('epubcfi(A)');
+  viewer.manager.resize();
+  viewer.read('epubcfi(B)');
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  assert.equal(viewer.displays.at(-1), 'epubcfi(A)');
+  assert.equal(viewer.bridge._ereaderLastConfirmed.startCfi, 'epubcfi(A)');
+  assert.equal(viewer.bridge._ereaderSnapshot(), null);
+  assert.equal(viewer.bridge._ereaderBusy, true);
+  // Dart's independent native-handler watchdog exposes recovery for this state.
+  // JavaScript must not release busy or save the transient B while display hangs.
 });

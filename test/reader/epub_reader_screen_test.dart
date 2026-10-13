@@ -54,6 +54,7 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
   Map<String, dynamic>? restoreArguments;
   int selectionCalls = 0;
   bool restoreSucceeds = true;
+  Completer<CallAsyncJavaScriptResult?>? pendingRestore;
   final handlers = <String, JavaScriptHandlerCallback>{};
 
   @override
@@ -87,7 +88,8 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
   }) {
     if (functionBody.contains("_ereaderRestoreOffset")) {
       restoreArguments = arguments;
-      return Future.value(CallAsyncJavaScriptResult(value: restoreSucceeds));
+      return pendingRestore?.future ??
+          Future.value(CallAsyncJavaScriptResult(value: restoreSucceeds));
     }
     if (functionBody.contains("_ereaderSnapshot")) {
       return Future.value(CallAsyncJavaScriptResult(value: snapshot));
@@ -808,6 +810,183 @@ void main() {
       }
     },
   );
+  testWidgets('retry after seek discards the previous viewport payload', (
+    tester,
+  ) async {
+    try {
+      final oldCfi = books.get('book')!.lastReadCfi;
+      const oldLayout = {'width': 800, 'height': 600, 'fontSize': '18px'};
+      await tester.runAsync(() async {
+        await repository.updateReadingProgress(
+          bookId: 'book',
+          page: 0,
+          progress: 0.2,
+          cfi: oldCfi,
+          epubViewport: {'offset': -47.25, 'layout': oldLayout},
+        );
+      });
+      final native = _SeekWebViewController();
+      final viewer = await open(tester, native: native);
+      expect(native.restoreArguments!['offset'], -47.25);
+      final slider = tester.widget<Slider>(find.byType(Slider));
+      slider.onChangeStart!(0.8);
+      slider.onChangeEnd!(0.8);
+      const newCfi = 'epubcfi(/6/10!/4/2/1:0)';
+      native.completed.complete(
+        CallAsyncJavaScriptResult(
+          value: {
+            'startCfi': newCfi,
+            'endCfi': newCfi,
+            'progress': 0.8,
+            'sequence': 2,
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.runAsync(() async {
+        viewer.onRendererTerminated!();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      });
+      await tester.pump();
+      final replacement = tester.widget<EpubViewer>(find.byType(EpubViewer));
+      final retryNative = _SeekWebViewController();
+      replacement.epubController.setWebViewController(
+        InAppWebViewController.fromPlatform(platform: retryNative),
+      );
+      replacement.onEpubLoaded!();
+      await tester.pump();
+      expect(retryNative.restoreArguments, {
+        'cfi': newCfi,
+        'offset': null,
+        'layout': null,
+      });
+      expect(books.get('book')!.epubCheckpoint!['offset'], isNull);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets('retry with an offset but no layout cannot reuse prior layout', (
+    tester,
+  ) async {
+    try {
+      final cfi = books.get('book')!.lastReadCfi;
+      await tester.runAsync(() async {
+        await repository.updateReadingProgress(
+          bookId: 'book',
+          page: 0,
+          progress: 0.2,
+          cfi: cfi,
+          epubViewport: {
+            'offset': -8.0,
+            'layout': {'fontSize': '18px'},
+          },
+        );
+      });
+      final viewer = await open(tester, native: _SeekWebViewController());
+      viewer.onLoadError!('Failed viewer');
+      await tester.runAsync(() async {
+        await repository.updateReadingProgress(
+          bookId: 'book',
+          page: 0,
+          progress: 0.2,
+          cfi: cfi,
+          epubViewport: {'offset': 7.0},
+        );
+      });
+      await tester.pump();
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+      final replacement = tester.widget<EpubViewer>(find.byType(EpubViewer));
+      final native = _SeekWebViewController();
+      replacement.epubController.setWebViewController(
+        InAppWebViewController.fromPlatform(platform: native),
+      );
+      replacement.onEpubLoaded!();
+      await tester.pump();
+      expect(native.restoreArguments!['offset'], 7.0);
+      expect(native.restoreArguments!['layout'], isNull);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets(
+    'hung resize reflow exposes recovery without saving transient text',
+    (tester) async {
+      try {
+        final native = _SeekWebViewController();
+        await open(tester, native: native);
+        native.handlers['ereaderRelocated']!([
+          {...location(0.4).toJson(), 'sequence': 1, 'offset': -6.0},
+        ]);
+        await tester.runAsync(() async {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          await books.flush();
+        });
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        native.handlers['ereaderReflow']!([true]);
+        native.handlers['ereaderRelocated']!([
+          {...location(0.9).toJson(), 'sequence': 2, 'offset': 200.0},
+        ]);
+        await tester.pump(const Duration(seconds: 6));
+        native.handlers['ereaderReflow']!([true]);
+        await tester.pump(const Duration(seconds: 5));
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('Return to library'), findsOneWidget);
+        // A display promise resolving after timeout must remain fenced off.
+        native.handlers['ereaderReflow']!([false]);
+        native.handlers['ereaderRelocated']!([
+          {...location(0.9).toJson(), 'sequence': 3, 'offset': 200.0},
+        ]);
+        await close(tester);
+        expect(books.get('book')!.lastReadProgress, 0.4);
+        expect(books.get('book')!.epubCheckpoint!['offset'], -6.0);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+  testWidgets('completed reflow cancels its recovery deadline', (tester) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      native.handlers['ereaderReflow']!([true]);
+      await tester.pump(const Duration(seconds: 8));
+      native.handlers['ereaderReflow']!([false]);
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.text('Retry'), findsNothing);
+      expect(find.byType(EpubViewer), findsOneWidget);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets('slow initial restoration retains opening behavior', (
+    tester,
+  ) async {
+    try {
+      final pending = Completer<CallAsyncJavaScriptResult?>();
+      final native = _SeekWebViewController()..pendingRestore = pending;
+      await open(tester, native: native, showControls: false);
+      native.handlers['ereaderReflow']!([true]);
+      await tester.pump(const Duration(seconds: 11));
+      expect(find.text('Retry'), findsNothing);
+      expect(find.byType(EpubViewer), findsOneWidget);
+      pending.complete(CallAsyncJavaScriptResult(value: true));
+      await tester.pump();
+      native.handlers['ereaderReflow']!([false]);
+      await tester.pump(const Duration(seconds: 11));
+      expect(find.text('Retry'), findsNothing);
+      expect(find.byType(EpubViewer), findsOneWidget);
+    } finally {
+      await close(tester);
+    }
+  });
   testWidgets(
     'failed initial restoration retains the saved checkpoint and exposes retry',
     (tester) async {
