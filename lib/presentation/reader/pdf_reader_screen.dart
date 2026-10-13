@@ -6,6 +6,7 @@ import 'package:pdfrx/pdfrx.dart';
 
 import '../../data/repositories/book_repository.dart';
 import 'bloc/reader_bloc.dart';
+import '../statistics/reader_activity_scope.dart';
 
 class PdfReaderScreen extends StatefulWidget {
   final String bookId;
@@ -17,6 +18,7 @@ class PdfReaderScreen extends StatefulWidget {
 }
 
 class _PdfReaderScreenState extends State<PdfReaderScreen> {
+  final _readingActivity = ReaderActivityController();
   late final ReaderBloc _readerBloc;
   PdfViewerController? _controller;
   Timer? _autoSaveTimer;
@@ -49,6 +51,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
     _autoSaveTimer?.cancel();
+    _readingActivity.dispose();
     super.dispose();
   }
 
@@ -62,73 +65,77 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Widget build(BuildContext context) {
     return BlocProvider.value(
       value: _readerBloc,
-      child: BlocBuilder<ReaderBloc, ReaderState>(
-        builder: (context, state) {
-          if (state is ReaderLoading) {
+      child: ReaderActivityScope(
+        bookId: widget.bookId,
+        controller: _readingActivity,
+        child: BlocBuilder<ReaderBloc, ReaderState>(
+          builder: (context, state) {
+            if (state is ReaderLoading) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            if (state is ReaderError) {
+              return Scaffold(
+                appBar: AppBar(),
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(state.message),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            if (state is ReaderLoaded || state is ProgressSaved) {
+              final book = state is ReaderLoaded
+                  ? state.book
+                  : (state as ProgressSaved).book;
+              final initialPage = state is ReaderLoaded
+                  ? state.currentPage
+                  : (state as ProgressSaved).currentPage;
+
+              return Scaffold(
+                body: Stack(
+                  children: [
+                    // PDF viewer - handles all scroll gestures naturally
+                    _buildPdfViewer(context, book.localPath, initialPage),
+                    // Top bar
+                    _buildTopBar(context, book.title),
+                    // Bottom bar
+                    _buildBottomBar(context),
+                    // Tap detector only at top center (when controls are hidden)
+                    if (!_showControls)
+                      Positioned(
+                        top: 0,
+                        left: MediaQuery.of(context).size.width * 0.4,
+                        right: MediaQuery.of(context).size.width * 0.4,
+                        height: 60,
+                        child: GestureDetector(
+                          onTap: _toggleControls,
+                          behavior: HitTestBehavior.opaque,
+                          child: Container(color: Colors.transparent),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }
+
             return const Scaffold(
               body: Center(child: CircularProgressIndicator()),
             );
-          }
-
-          if (state is ReaderError) {
-            return Scaffold(
-              appBar: AppBar(),
-              body: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      size: 64,
-                      color: Colors.red,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(state.message),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          if (state is ReaderLoaded || state is ProgressSaved) {
-            final book = state is ReaderLoaded
-                ? state.book
-                : (state as ProgressSaved).book;
-            final initialPage = state is ReaderLoaded
-                ? state.currentPage
-                : (state as ProgressSaved).currentPage;
-
-            return Scaffold(
-              body: Stack(
-                children: [
-                  // PDF viewer - handles all scroll gestures naturally
-                  _buildPdfViewer(context, book.localPath, initialPage),
-                  // Top bar
-                  _buildTopBar(context, book.title),
-                  // Bottom bar
-                  _buildBottomBar(context),
-                  // Tap detector only at top center (when controls are hidden)
-                  if (!_showControls)
-                    Positioned(
-                      top: 0,
-                      left: MediaQuery.of(context).size.width * 0.4,
-                      right: MediaQuery.of(context).size.width * 0.4,
-                      height: 60,
-                      child: GestureDetector(
-                        onTap: _toggleControls,
-                        behavior: HitTestBehavior.opaque,
-                        child: Container(color: Colors.transparent),
-                      ),
-                    ),
-                ],
-              ),
-            );
-          }
-
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        },
+          },
+        ),
       ),
     );
   }
@@ -179,9 +186,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
             await controller.goToPage(pageNumber: initialPage);
           }
 
+          if (!mounted) return;
           _isInitializing = false;
+          _readingActivity.setLoaded(true);
 
           if (mounted) setState(() {});
+        },
+        onDocumentChanged: (document) {
+          if (mounted && document == null) _readingActivity.setLoaded(false);
         },
         onPageChanged: (pageNumber) {
           if (_isInitializing || !mounted) return;
@@ -327,7 +339,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                           min: 1,
                           max: _totalPages.toDouble(),
                           onChanged: (value) {
-                            _controller?.goToPage(pageNumber: value.toInt());
+                            unawaited(_seekPage(value.toInt()));
                           },
                         ),
                       // Page indicator
@@ -356,6 +368,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _seekPage(int page) async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await _readingActivity.navigate(
+        () => controller.goToPage(pageNumber: page),
+      );
+    } on TimeoutException {
+      // pdfrx cancels superseded animation futures without completing them.
+    } catch (error) {
+      debugPrint('PDF page navigation failed: $error');
+    }
   }
 
   void _showSettings(BuildContext context) {

@@ -16,6 +16,11 @@ class LibraryScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('My Library'),
         actions: [
+          TextButton.icon(
+            onPressed: () => context.push('/stats'),
+            icon: const Icon(Icons.bar_chart),
+            label: const Text('Stats'),
+          ),
           BlocBuilder<ThemeCubit, ThemeState>(
             builder: (context, state) {
               return IconButton(
@@ -217,7 +222,9 @@ class LibraryScreen extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Book?'),
-        content: Text('Are you sure you want to remove "${book.title}" from your library?'),
+        content: Text(
+          'Are you sure you want to remove "${book.title}" from your library?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -228,9 +235,7 @@ class LibraryScreen extends StatelessWidget {
               Navigator.pop(context);
               context.read<LibraryBloc>().add(DeleteBook(book.id));
             },
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Delete'),
           ),
         ],

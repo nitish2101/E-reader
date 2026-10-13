@@ -7,6 +7,7 @@ import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:hive/hive.dart';
 import '../../data/repositories/book_repository.dart';
 import 'epub_location_bridge.dart';
+import '../statistics/reader_activity_scope.dart';
 import 'widgets/dictionary_dialog.dart';
 
 typedef _ProgressView = ({double progress, bool canSeek, bool animate});
@@ -31,6 +32,8 @@ class EpubReaderScreen extends StatefulWidget {
 
 class _EpubReaderScreenState extends State<EpubReaderScreen>
     with WidgetsBindingObserver {
+  final _readingActivity = ReaderActivityController();
+
   // EPUB controller
   EpubController? _epubController;
 
@@ -53,6 +56,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   double? _previewProgress;
   bool _locationsReady = false;
   bool _isSeeking = false;
+  bool _isChapterLoading = false;
+  bool _drawerOpen = false;
   bool _usesDirectLocationEvents = false;
   bool _isPreparingLocationBridge = false;
   int _lastLocationSequence = 0;
@@ -164,6 +169,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     _saveDebounceTimer?.cancel();
     _saveProgressNow();
     _progressView.dispose();
+    _readingActivity.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -221,6 +227,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Future<void> _closeReader() async {
     if (_isClosing) return;
     _isClosing = true;
+    _readingActivity.setLoaded(false);
     _saveDebounceTimer?.cancel();
     await _captureAndSave();
     if (!mounted) return;
@@ -326,6 +333,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           }
         },
       );
+      webView.addJavaScriptHandler(
+        handlerName: 'ereaderActivity',
+        callback: (_) {
+          if (mounted && !_isClosing) _readingActivity.interact();
+        },
+      );
       final installed = await webView.evaluateJavascript(
         source: epubLocationBridgeScript,
       );
@@ -365,6 +378,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Future<void> _seekToProgress(double value) async {
     _isSliderDragging = false;
     _isSeeking = true;
+    _updateActivityBlocking();
     _pendingSeekLocation = null;
     _previewProgress = value;
     _saveDebounceTimer?.cancel();
@@ -436,6 +450,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     } finally {
       if (mounted) {
         _isSeeking = false;
+        _updateActivityBlocking();
         _previewProgress = null;
         _pendingSeekLocation = null;
         _publishProgress();
@@ -450,6 +465,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _touchMoved = true;
       return;
     }
+    _readingActivity.interact();
     _touchPointer = event.pointer;
     _touchStart = event.localPosition;
     _touchStartTime = DateTime.now();
@@ -457,6 +473,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    _readingActivity.interact();
     if (event.pointer == _touchPointer &&
         _touchStart != null &&
         (event.localPosition - _touchStart!).distance > 10) {
@@ -512,6 +529,14 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       );
     }
 
+    return ReaderActivityScope(
+      bookId: widget.bookId,
+      controller: _readingActivity,
+      child: _buildLoadedReader(context),
+    );
+  }
+
+  Widget _buildLoadedReader(BuildContext context) {
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (bool didPop, Object? result) {
@@ -558,6 +583,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           ],
         ),
         drawer: _buildChapterDrawer(context),
+        onDrawerChanged: (opened) {
+          _drawerOpen = opened;
+          _updateActivityBlocking();
+        },
       ),
     );
   }
@@ -665,6 +694,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         if (!mounted) return;
         _isPreparingLocationBridge = false;
         setState(() => _isEpubLoading = false);
+        _readingActivity.setLoaded(true);
         _publishProgress();
         if (_locationsReady) unawaited(_refreshLocation());
       },
@@ -861,7 +891,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                     leading: const Icon(Icons.bookmark_border),
                     onTap: () {
                       Navigator.pop(context);
-                      _epubController?.display(cfi: chapter.href);
+                      unawaited(_displayChapter(chapter.href));
                     },
                   );
                 },
@@ -871,6 +901,39 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         ),
       ),
     );
+  }
+
+  void _updateActivityBlocking() {
+    _readingActivity.setBlocked(_drawerOpen || _isSeeking || _isChapterLoading);
+  }
+
+  Future<void> _displayChapter(String href) async {
+    if (_isChapterLoading || _isClosing) return;
+    _isChapterLoading = true;
+    _updateActivityBlocking();
+    try {
+      final result = await _epubController?.webViewController
+          ?.callAsyncJavaScript(
+            functionBody: 'await rendition.display(href); return true;',
+            arguments: {'href': href},
+          )
+          .timeout(const Duration(seconds: 10));
+      if (result?.error != null || result?.value != true) {
+        throw StateError('Could not display the chapter');
+      }
+    } catch (error) {
+      debugPrint('Chapter navigation failed: $error');
+      if (mounted && !_isClosing) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open that chapter. Try again.'),
+          ),
+        );
+      }
+    } finally {
+      _isChapterLoading = false;
+      if (mounted && !_isClosing) _updateActivityBlocking();
+    }
   }
 
   void _showTextSettings(BuildContext context) {

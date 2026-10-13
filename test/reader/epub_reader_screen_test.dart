@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:ereader/data/models/book_model.dart';
+import 'package:ereader/data/statistics/reading_statistics_repository.dart';
+import 'package:ereader/data/statistics/reading_tracker.dart';
 import 'package:ereader/data/repositories/book_repository.dart';
 import 'package:ereader/presentation/reader/epub_reader_screen.dart';
 import 'package:flutter/material.dart';
@@ -88,6 +90,9 @@ void main() {
   late Directory temp;
   late Box<BookModel> books;
   late BookRepository repository;
+  late ReadingStatisticsRepository statistics;
+  late ReadingTracker tracker;
+  var statisticsElapsed = Duration.zero;
 
   setUpAll(() {
     Hive.registerAdapter(BookModelAdapter());
@@ -98,6 +103,11 @@ void main() {
     Hive.init(temp.path);
     books = await Hive.openBox<BookModel>('books');
     await Hive.openBox('settings');
+    statistics = ReadingStatisticsRepository(
+      await Hive.openBox('readingStatistics'),
+    );
+    statisticsElapsed = Duration.zero;
+    tracker = ReadingTracker(statistics, elapsed: () => statisticsElapsed);
     await File('${temp.path}/book.epub').writeAsBytes([80, 75]);
     await books.put(
       'book',
@@ -114,6 +124,9 @@ void main() {
     repository = BookRepository(booksBox: books);
   });
   tearDown(() async {
+    tracker.dispose();
+    await statistics.flush();
+    statistics.dispose();
     await Hive.close();
     await temp.delete(recursive: true);
   });
@@ -127,7 +140,10 @@ void main() {
       await tester.pumpWidget(
         RepositoryProvider.value(
           value: repository,
-          child: const MaterialApp(home: EpubReaderScreen(bookId: 'book')),
+          child: RepositoryProvider.value(
+            value: tracker,
+            child: const MaterialApp(home: EpubReaderScreen(bookId: 'book')),
+          ),
         ),
       );
       await tester
@@ -597,4 +613,72 @@ void main() {
       }
     },
   );
+
+  testWidgets('drawer close cannot resume timing during chapter navigation', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      final viewer = await open(tester, native: native);
+      viewer.onChaptersLoaded!([
+        EpubChapter(
+          title: 'Next chapter',
+          href: 'chapter2.xhtml',
+          id: 'chapter2',
+          subitems: [],
+        ),
+      ]);
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 10);
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.list));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Next chapter'));
+        await tester.pumpAndSettle();
+        statisticsElapsed = const Duration(seconds: 30);
+        tracker.checkpoint();
+        await statistics.flush();
+      });
+      expect(statistics.total.inSeconds, 10);
+      native.completed.complete(CallAsyncJavaScriptResult(value: true));
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 40);
+      await close(tester);
+      expect(statistics.total.inSeconds, 20);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets('chapter bridge errors show a recoverable message', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      final viewer = await open(tester, native: native);
+      viewer.onChaptersLoaded!([
+        EpubChapter(
+          title: 'Missing chapter',
+          href: 'missing.xhtml',
+          id: 'missing',
+          subitems: [],
+        ),
+      ]);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.list));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Missing chapter'));
+      native.completed.complete(
+        CallAsyncJavaScriptResult(error: 'Missing chapter'),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Could not open that chapter. Try again.'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      await close(tester);
+    }
+  });
 }
