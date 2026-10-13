@@ -19,6 +19,9 @@ class BookRepository {
   final Box<BookModel> _booksBox;
   BookRepository({Box<BookModel>? booksBox})
     : _booksBox = booksBox ?? Hive.box<BookModel>(AppConstants.booksBox);
+  // Shared per box: independently created repositories cannot reorder writes.
+  static final _progressWrites = Expando<Future<void>>();
+
   final Uuid _uuid = const Uuid();
   BookModel? findStoreBook(UnifiedBook book) {
     for (final existing in _booksBox.values) {
@@ -338,24 +341,44 @@ class BookRepository {
     required double progress,
     String? cfi,
     int? totalPages,
-  }) async {
-    final book = getBook(bookId);
-    if (book == null) {
-      debugPrint('⚠️ updateReadingProgress: Book $bookId not found');
-      return;
-    }
-
-    book.lastReadPage = page < 0 ? 0 : page;
-    book.lastReadProgress = progress.isFinite ? progress.clamp(0.0, 1.0) : 0;
-    if (totalPages != null && totalPages > 0) book.totalPages = totalPages;
-    book.lastReadCfi = cfi;
-    book.lastReadTime = DateTime.now();
-
-    // Use put() instead of save() so Hive.watch() fires and the library refreshes
-    await _booksBox.put(book.id, book);
-    debugPrint(
-      '📖 Progress updated: ${book.title} -> ${(progress * 100).toStringAsFixed(1)}% (CFI: ${cfi != null && cfi.length > 30 ? cfi.substring(0, 30) : cfi ?? 'none'})',
-    );
+    Map<String, dynamic>? epubViewport,
+  }) {
+    final normalizedProgress = progress.isFinite
+        ? progress.clamp(0.0, 1.0)
+        : 0.0;
+    // Copy the payload before queueing; never capture mutable reader state.
+    final viewport = epubViewport == null
+        ? null
+        : Map<String, dynamic>.from(epubViewport);
+    final previous = _progressWrites[_booksBox] ?? Future<void>.value();
+    final write = previous.then((_) async {
+      final book = getBook(bookId);
+      if (book == null) return;
+      final checkpoint = viewport == null
+          ? book.epubCheckpoint
+          : {
+              ...viewport,
+              'version': 1,
+              'revision': ((book.epubCheckpoint?['revision'] as int?) ?? 0) + 1,
+              'cfi': cfi,
+              'progress': normalizedProgress,
+            };
+      // Mutate only inside the serialized transition. Keep existing callers'
+      // BookModel references current, as the repository has always done.
+      book.lastReadPage = page < 0 ? 0 : page;
+      book.lastReadProgress = normalizedProgress;
+      book.lastReadCfi = cfi;
+      if (totalPages != null && totalPages > 0) book.totalPages = totalPages;
+      book.lastReadTime = DateTime.now();
+      book.epubCheckpoint = checkpoint;
+      await _booksBox.put(book.id, book);
+      await _booksBox.flush();
+    });
+    // A failed write must not poison subsequent saves. The caller still sees it.
+    _progressWrites[_booksBox] = write.catchError((Object error) {
+      debugPrint('Failed to persist reading checkpoint: $error');
+    });
+    return write;
   }
 
   /// Delete a book from library

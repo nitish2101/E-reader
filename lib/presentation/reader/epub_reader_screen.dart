@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
@@ -46,6 +47,18 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   String? _currentCfi;
   double? _viewportOffset;
   double? _initialViewportOffset;
+  Map<String, dynamic>? _viewportLayout;
+  Map<String, dynamic>? _initialViewportLayout;
+  Timer? _periodicCheckpoint;
+  Timer? _openingTimer;
+  Timer? _reflowTimer;
+  bool _openingStalled = false;
+  bool _isReflowing = false;
+  bool _typographyChangePending = false;
+  bool _rendererFailed = false;
+  Future<void>? _activeCapture;
+  int _viewerGeneration = 0;
+  int _automaticRecoveries = 0;
   bool _allowPop = false;
   bool _isClosing = false;
   String? _currentSelection; // Stores current text selection
@@ -89,6 +102,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     WidgetsBinding.instance.addObserver(this);
     _epubController = EpubController();
     _loadSavedSettings();
+    _startOpeningTimer();
+    _periodicCheckpoint = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_captureAndSave());
+    });
+
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
@@ -104,9 +122,16 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   /// Load book from Hive — instant, no async needed
   void _loadBookData() {
+    // Retry loads a new checkpoint, which may have no reusable viewport data.
+    _initialViewportOffset = null;
+    _initialViewportLayout = null;
     final book = _bookRepository.getBook(widget.bookId);
     if (book == null) {
       setState(() => _loadError = 'Book not found');
+      return;
+    }
+    if (!File(book.localPath).existsSync()) {
+      _loadError = 'This book file is missing. Import or download it again.';
       return;
     }
     _bookDataLoaded = true;
@@ -123,12 +148,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             book.lastReadCfi!.startsWith('epubcfi('))
         ? book.lastReadCfi
         : null;
-    final viewport = Hive.box('settings').get('epubViewport:${widget.bookId}');
+    final viewport =
+        book.epubCheckpoint ??
+        Hive.box('settings').get('epubViewport:${widget.bookId}');
     if (viewport is Map &&
         viewport['cfi'] == _initialCfi &&
         viewport['offset'] is num &&
         (viewport['offset'] as num).isFinite) {
       _initialViewportOffset = (viewport['offset'] as num).toDouble();
+      if (viewport['layout'] is Map) {
+        _initialViewportLayout = Map<String, dynamic>.from(
+          viewport['layout'] as Map,
+        );
+      }
     }
     _publishProgress();
     // No setState needed — didChangeDependencies runs before first build
@@ -154,7 +186,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      unawaited(_captureAndSave());
+      unawaited(_captureFreshAndSave());
     }
   }
 
@@ -162,7 +194,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _saveDebounceTimer?.cancel();
-    _saveProgressNow();
+    _periodicCheckpoint?.cancel();
+    _openingTimer?.cancel();
+    _reflowTimer?.cancel();
+    _viewerGeneration++;
+    unawaited(_saveProgressNow());
     _progressView.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -181,18 +217,35 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         page: 0,
         progress: _progress,
         cfi: cfi,
+        epubViewport: {'offset': offset, 'layout': _viewportLayout},
       );
-      await Hive.box(
-        'settings',
-      ).put('epubViewport:${widget.bookId}', {'cfi': cfi, 'offset': offset});
     } catch (e) {
       _hasDirtyProgress = true;
       debugPrint('Failed to save progress: $e');
     }
   }
 
-  Future<void> _captureAndSave() async {
-    if (!_isEpubLoading && !_isPreparingLocationBridge && !_isSeeking) {
+  Future<void> _captureAndSave() {
+    return _activeCapture ??= _captureVisibleAndSave().whenComplete(
+      () => _activeCapture = null,
+    );
+  }
+
+  Future<void> _captureFreshAndSave() async {
+    // A previous capture may have sampled before the final scroll. Finish its
+    // write, then sample again for close/background rather than just joining it.
+    final ongoingCapture = _activeCapture;
+    if (ongoingCapture != null) await ongoingCapture;
+    await _captureAndSave();
+  }
+
+  Future<void> _captureVisibleAndSave() async {
+    final generation = _viewerGeneration;
+    if (!_isEpubLoading &&
+        !_isPreparingLocationBridge &&
+        !_isSeeking &&
+        !_isReflowing &&
+        !_rendererFailed) {
       try {
         final result = await _epubController?.webViewController
             ?.evaluateJavascript(
@@ -200,7 +253,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                   'window._ereaderSnapshot ? window._ereaderSnapshot() : null',
             )
             .timeout(const Duration(milliseconds: 750));
-        if (mounted && result is Map) {
+        if (mounted &&
+            generation == _viewerGeneration &&
+            !_isReflowing &&
+            !_isSeeking &&
+            !_rendererFailed &&
+            result is Map) {
           final data = Map<String, dynamic>.from(result);
           final sequence = data['sequence'];
           if (sequence is int && sequence > _lastLocationSequence) {
@@ -208,6 +266,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             _recordLocation(
               EpubLocation.fromJson(data),
               offset: data['offset'],
+              layout: data['layout'],
             );
           }
         }
@@ -221,8 +280,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Future<void> _closeReader() async {
     if (_isClosing) return;
     _isClosing = true;
+    _periodicCheckpoint?.cancel();
     _saveDebounceTimer?.cancel();
-    await _captureAndSave();
+    await _captureFreshAndSave();
     if (!mounted) return;
     setState(() => _allowPop = true);
     await WidgetsBinding.instance.endOfFrame;
@@ -232,7 +292,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   /// Schedule a save after the user stops scrolling for 3 seconds
   void _scheduleSave() {
     _saveDebounceTimer?.cancel();
-    _saveDebounceTimer = Timer(const Duration(seconds: 3), _saveProgressNow);
+    _saveDebounceTimer = Timer(const Duration(seconds: 3), _captureAndSave);
   }
 
   // ---------------------------------------------------------------------------
@@ -252,12 +312,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           _locationsReady &&
           !_isEpubLoading &&
           !_isPreparingLocationBridge &&
-          !_isSeeking,
+          !_isSeeking &&
+          !_typographyChangePending &&
+          !_isReflowing &&
+          !_rendererFailed,
       animate: !_isSliderDragging && !_isSeeking,
     );
   }
 
-  void _recordLocation(EpubLocation location, {dynamic offset}) {
+  void _recordLocation(
+    EpubLocation location, {
+    dynamic offset,
+    dynamic layout,
+  }) {
     if (!location.progress.isFinite ||
         !location.startCfi.startsWith('epubcfi(')) {
       return;
@@ -268,14 +335,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     final viewportOffset = offset is num && offset.isFinite
         ? offset.toDouble()
         : null;
+    final viewportLayout = layout is Map
+        ? Map<String, dynamic>.from(layout)
+        : null;
     if (_currentCfi == location.startCfi &&
         _progress == progress &&
-        _viewportOffset == viewportOffset) {
+        _viewportOffset == viewportOffset &&
+        mapEquals(_viewportLayout, viewportLayout)) {
       return;
     }
     _currentCfi = location.startCfi;
     _progress = progress;
     _viewportOffset = viewportOffset;
+    _viewportLayout = viewportLayout;
     _hasDirtyProgress = true;
     _publishProgress();
     _scheduleSave();
@@ -293,12 +365,15 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   Future<void> _installLocationBridge() async {
     final webView = _epubController?.webViewController;
+    final generation = _viewerGeneration;
     if (webView == null) return;
     try {
       webView.addJavaScriptHandler(
         handlerName: 'ereaderRelocated',
         callback: (args) {
           if (!mounted ||
+              generation != _viewerGeneration ||
+              _rendererFailed ||
               !_usesDirectLocationEvents ||
               args.isEmpty ||
               args.first is! Map) {
@@ -318,35 +393,80 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
               _pendingSeekLocation = location;
               return;
             }
-            if (!_isEpubLoading && !_isPreparingLocationBridge && !_isSeeking) {
-              _recordLocation(location, offset: data['offset']);
+            if (!_isEpubLoading &&
+                !_isPreparingLocationBridge &&
+                !_isSeeking &&
+                !_isReflowing) {
+              _recordLocation(
+                location,
+                offset: data['offset'],
+                layout: data['layout'],
+              );
             }
           } catch (e) {
             debugPrint('Invalid EPUB location event: $e');
           }
         },
       );
+      webView.addJavaScriptHandler(
+        handlerName: 'ereaderReflow',
+        callback: (args) {
+          if (!mounted || generation != _viewerGeneration || _rendererFailed) {
+            return;
+          }
+          _isReflowing = args.isNotEmpty && args.first == true;
+          if (_isReflowing) {
+            _startReflowTimer(generation);
+          } else {
+            _reflowTimer?.cancel();
+            _reflowTimer = null;
+          }
+          _publishProgress();
+        },
+      );
+      webView.addJavaScriptHandler(
+        handlerName: 'ereaderReflowError',
+        callback: (args) {
+          if (!mounted || generation != _viewerGeneration) return;
+          _showViewerError(
+            'Could not keep your place. Retry to restore the last checkpoint.',
+          );
+        },
+      );
       final installed = await webView.evaluateJavascript(
         source: epubLocationBridgeScript,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _viewerGeneration) return;
       _usesDirectLocationEvents = installed == true;
       if (_usesDirectLocationEvents && _initialCfi != null) {
-        await webView.callAsyncJavaScript(
+        final restored = await webView.callAsyncJavaScript(
           // The first display may have been shifted by browser anchoring before
           // the bridge was installed. Restore once with anchoring disabled.
           functionBody: '''
             await displayed;
             await rendition.display(cfi);
             await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-            return window._ereaderRestoreOffset(cfi, offset);
+            var compatible = window._ereaderLayoutMatches(layout) && Number.isFinite(offset);
+            return window._ereaderRestoreOffset(cfi, compatible ? offset : 0);
           ''',
-          arguments: {'cfi': _initialCfi, 'offset': _initialViewportOffset},
+          arguments: {
+            'cfi': _initialCfi,
+            'offset': _initialViewportOffset,
+            'layout': _initialViewportLayout,
+          },
         );
+        if (restored?.error != null || restored?.value != true) {
+          throw StateError('Could not restore the confirmed passage');
+        }
       }
       await _setProgressReporting();
     } catch (e) {
       debugPrint('Failed to install EPUB location tracking: $e');
+      if (mounted && generation == _viewerGeneration) {
+        _showViewerError(
+          'Could not restore your place. Retry to reopen the reader.',
+        );
+      }
     }
   }
 
@@ -363,6 +483,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Future<void> _seekToProgress(double value) async {
+    final generation = _viewerGeneration;
     _isSliderDragging = false;
     _isSeeking = true;
     _pendingSeekLocation = null;
@@ -396,7 +517,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             arguments: {'progress': value},
           )
           .timeout(const Duration(seconds: 10));
-      if (!mounted) return;
+      if (!mounted || generation != _viewerGeneration) return;
       if (result?.error != null || result?.value is! Map) {
         throw StateError('Could not confirm reading position');
       }
@@ -425,7 +546,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       }
       _recordLocation(location);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _viewerGeneration) return;
       debugPrint('Failed to seek in EPUB: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -434,13 +555,176 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       );
       unawaited(_refreshLocation());
     } finally {
-      if (mounted) {
+      if (mounted && generation == _viewerGeneration) {
         _isSeeking = false;
         _previewProgress = null;
         _pendingSeekLocation = null;
         _publishProgress();
         unawaited(_setProgressReporting());
         if (_hasDirtyProgress) _scheduleSave();
+      }
+    }
+  }
+
+  void _startOpeningTimer() {
+    _openingTimer?.cancel();
+    _openingTimer = Timer(const Duration(seconds: 15), () {
+      if (mounted && _isEpubLoading) setState(() => _openingStalled = true);
+    });
+  }
+
+  void _startReflowTimer(int generation) {
+    // Initial opening retains its slow-load controls and may still complete.
+    // Only an already-open reader gets a fatal reflow recovery deadline.
+    if (_isEpubLoading || _isPreparingLocationBridge || _reflowTimer != null) {
+      return;
+    }
+    _reflowTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted &&
+          generation == _viewerGeneration &&
+          _isReflowing &&
+          !_rendererFailed) {
+        _showViewerError(
+          'Text layout is taking too long. Retry to restore your last checkpoint.',
+        );
+      }
+    });
+  }
+
+  void _showViewerError(String message) {
+    _saveDebounceTimer?.cancel();
+    _reflowTimer?.cancel();
+    _reflowTimer = null;
+    setState(() {
+      _loadError = message;
+      _rendererFailed = true;
+    });
+    _publishProgress();
+  }
+
+  Widget _recoveryControls(String message) => Padding(
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(message, textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        FilledButton(onPressed: _retryViewer, child: const Text('Retry')),
+        TextButton(
+          onPressed: _closeReader,
+          child: const Text('Return to library'),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _recoverRenderer() async {
+    _reflowTimer?.cancel();
+    _reflowTimer = null;
+    setState(() {
+      _rendererFailed = true;
+      _viewerGeneration++;
+      _cachedEpubViewer = const SizedBox.expand();
+      _isEpubLoading = true;
+    });
+    _saveDebounceTimer?.cancel();
+    // The dead renderer cannot be sampled. Persist only the confirmed snapshot.
+    await _saveProgressNow();
+    if (!mounted) return;
+    if (_automaticRecoveries >= 2) {
+      _showViewerError(
+        'The reader stopped repeatedly. Retry or return to your library.',
+      );
+      // Remove even the last failed platform view.
+      setState(() {
+        _viewerGeneration++;
+        _cachedEpubViewer = const SizedBox.expand();
+      });
+      return;
+    }
+    _automaticRecoveries++;
+    await _retryViewer();
+  }
+
+  Future<void> _retryViewer() async {
+    _reflowTimer?.cancel();
+    _reflowTimer = null;
+    // Invalidate old native callbacks before any asynchronous write.
+    _viewerGeneration++;
+    _rendererFailed = true;
+    await _saveProgressNow();
+    if (!mounted || _isClosing) return;
+    setState(() {
+      _cachedEpubViewer = null;
+      _epubController = EpubController();
+      _isEpubLoading = true;
+      _locationsReady = false;
+      _isPreparingLocationBridge = false;
+      _isSeeking = false;
+      _isReflowing = false;
+      _typographyChangePending = false;
+      _usesDirectLocationEvents = false;
+      _lastLocationSequence = 0;
+      _pendingSeekLocation = null;
+      _previewProgress = null;
+      _currentSelection = null;
+      _loadError = null;
+      _openingStalled = false;
+      _rendererFailed = false;
+      _loadSavedSettings();
+      _loadBookData();
+    });
+    _startOpeningTimer();
+    _publishProgress();
+  }
+
+  Future<void> _changeFontSize(int size, StateSetter setModalState) async {
+    if (_typographyChangePending ||
+        _isReflowing ||
+        _isSeeking ||
+        _isEpubLoading ||
+        _rendererFailed) {
+      return;
+    }
+    final generation = _viewerGeneration;
+    _typographyChangePending = true;
+    // Update the sheet synchronously: it may close before native reflow finishes.
+    final previousSize = _fontSize;
+    setModalState(() => _fontSize = size);
+    _publishProgress();
+    // Sample before changing typography. The bridge holds this passage through reflow.
+    await _captureAndSave();
+    if (!mounted || generation != _viewerGeneration) return;
+    _isReflowing = true;
+    _publishProgress();
+    try {
+      final result = await _epubController?.webViewController
+          ?.callAsyncJavaScript(
+            functionBody:
+                'return await window._ereaderReflow(function() { rendition.themes.fontSize(size + "px"); });',
+            arguments: {'size': size},
+          )
+          .timeout(const Duration(seconds: 10));
+      if (!mounted || generation != _viewerGeneration || _rendererFailed) {
+        return;
+      }
+      if (result?.error != null || result?.value != true) {
+        throw StateError('Reflow failed');
+      }
+      _saveSettings();
+    } catch (error) {
+      if (mounted && generation == _viewerGeneration) {
+        _fontSize = previousSize;
+        _showViewerError(
+          'Could not keep your place after changing text size. Retry to restore it.',
+        );
+      }
+    } finally {
+      if (mounted && generation == _viewerGeneration) {
+        _typographyChangePending = false;
+        _isReflowing = false;
+        _publishProgress();
+        unawaited(_captureAndSave());
       }
     }
   }
@@ -489,19 +773,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_loadError != null) {
+    if (_loadError != null && !_bookDataLoaded) {
       return Scaffold(
         appBar: AppBar(),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.red),
-              const SizedBox(height: 16),
-              Text(_loadError!),
-            ],
-          ),
-        ),
+        body: Center(child: _recoveryControls(_loadError!)),
       );
     }
 
@@ -542,11 +817,16 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             ),
 
             // Loading overlay while WebView initialises
-            if (_isEpubLoading)
-              IgnorePointer(
-                child: Container(
-                  color: _getBackgroundColor(),
-                  child: const Center(child: CircularProgressIndicator()),
+            if (_isEpubLoading || _loadError != null)
+              Container(
+                color: _getBackgroundColor(),
+                child: Center(
+                  child: _loadError != null || _openingStalled
+                      ? _recoveryControls(
+                          _loadError ??
+                              'This book is taking longer to open. Loading continues.',
+                        )
+                      : const CircularProgressIndicator(),
                 ),
               ),
 
@@ -617,7 +897,17 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Widget _buildEpubViewer() {
+    final generation = _viewerGeneration;
+    bool active() =>
+        mounted && generation == _viewerGeneration && !_rendererFailed;
     return EpubViewer(
+      key: ValueKey(generation),
+      onLoadError: (error) {
+        if (active()) _showViewerError('Could not open this book. $error');
+      },
+      onRendererTerminated: () {
+        if (active()) unawaited(_recoverRenderer());
+      },
       epubController: _epubController!,
       epubSource: EpubSource.fromFile(File(_bookFilePath!)),
       initialCfi: _initialCfi,
@@ -652,30 +942,39 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         },
       ),
       onSelection: (text, cfi, rect, viewRect) {
-        _currentSelection = text;
+        if (active()) _currentSelection = text;
       },
       onChaptersLoaded: (chapters) {
-        if (mounted) setState(() => _chapters = chapters);
+        if (active()) setState(() => _chapters = chapters);
       },
-      onDeselection: () => _currentSelection = null,
+      onDeselection: () {
+        if (active()) _currentSelection = null;
+      },
       onEpubLoaded: () async {
-        if (!mounted || !_isEpubLoading || _isPreparingLocationBridge) return;
+        if (!active() || !_isEpubLoading || _isPreparingLocationBridge) return;
         _isPreparingLocationBridge = true;
         await _installLocationBridge();
-        if (!mounted) return;
+        if (!active()) return;
         _isPreparingLocationBridge = false;
-        setState(() => _isEpubLoading = false);
+        _openingTimer?.cancel();
+        setState(() {
+          _isEpubLoading = false;
+          _openingStalled = false;
+          _loadError = null;
+        });
+        if (_isReflowing) _startReflowTimer(generation);
         _publishProgress();
         if (_locationsReady) unawaited(_refreshLocation());
       },
       onLocationLoaded: () {
-        if (!mounted) return;
+        if (!active()) return;
         _locationsReady = true;
         _publishProgress();
         if (!_isEpubLoading) unawaited(_refreshLocation());
       },
       onRelocated: (location) {
-        if (!mounted ||
+        if (!active() ||
+            _isReflowing ||
             _usesDirectLocationEvents ||
             _isEpubLoading ||
             _isPreparingLocationBridge ||
@@ -902,11 +1201,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                       icon: const Icon(Icons.remove_circle_outline),
                       onPressed: _fontSize > 12
                           ? () {
-                              setModalState(() => _fontSize -= 2);
-                              setState(() {});
-                              _saveSettings();
-                              _epubController?.setFontSize(
-                                fontSize: _fontSize.toDouble(),
+                              unawaited(
+                                _changeFontSize(_fontSize - 2, setModalState),
                               );
                             }
                           : null,
@@ -919,11 +1215,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                       icon: const Icon(Icons.add_circle_outline),
                       onPressed: _fontSize < 32
                           ? () {
-                              setModalState(() => _fontSize += 2);
-                              setState(() {});
-                              _saveSettings();
-                              _epubController?.setFontSize(
-                                fontSize: _fontSize.toDouble(),
+                              unawaited(
+                                _changeFontSize(_fontSize + 2, setModalState),
                               );
                             }
                           : null,
