@@ -42,8 +42,9 @@ class _HomeScreenState extends State<HomeScreen>
   void didPopNext() => setState(() => _visible = true);
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (mounted)
+    if (mounted) {
       setState(() => _foreground = state == AppLifecycleState.resumed);
+    }
   }
 
   @override

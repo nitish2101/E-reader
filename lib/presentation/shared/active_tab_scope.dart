@@ -12,7 +12,7 @@ class ActiveTabScope extends InheritedWidget {
   static bool isActiveOf(BuildContext context) =>
       (context.dependOnInheritedWidgetOfExactType<ActiveTabScope>()?.isActive ??
           true) &&
-      TickerMode.of(context);
+      TickerMode.valuesOf(context).enabled;
 
   @override
   bool updateShouldNotify(ActiveTabScope oldWidget) =>
