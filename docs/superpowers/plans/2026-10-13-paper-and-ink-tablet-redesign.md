@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task in this managed worktree. Steps use checkbox syntax. The proposed execution method is implementation by the current agent; no subagents are authorized by this planning request.
 
-**Goal:** Implement the approved Paper & Ink dark appearance and companion light appearance across the existing reading app while retaining its state and book workflows.
+**Goal:** Implement the approved Paper & Ink dark appearance across the existing reading app while retaining its state and book workflows.
 
 **Architecture:** Keep existing repositories, Hive, BLoCs/Cubits and native reader ownership. Use a retained GoRouter tab shell, constraints-based layouts, a shared cover renderer and semantic Flutter themes; isolate EPUB control changes from its cached native viewer.
 
@@ -17,6 +17,12 @@ The user authorized implementation and removed the light app theme from scope. B
 Before implementation, fetched and merged latest origin/main c35ad42 into this branch (merge 4ba67b5). Preserve its real reading-statistics feature, Stats entry point, ReaderActivityScope, root readingRouteObserver, checkpoint/retry/resize recovery, and vendored reader-engine overrides. No changes to statistics storage, time accounting, checkpoint semantics or third_party engines. Statistics receives the shared dark theme, with focused layout fixes only if necessary for text scaling.
 
 The explicit no-new-tests instruction overrides skill TDD steps. Run existing checks and manual acceptance flows; no new cases or files. Existing visual selectors may be updated only for intentional changes. Keep current EPUB content geometry to avoid coupling this UI redesign to the newly integrated viewport-recovery behavior; redesign controls and palettes without a reading-measure or engine rewrite.
+
+## Execution status — 2026-10-14
+
+Theme/primitives, retained navigation, Library, Store, EPUB controls and Settings are implemented and committed. Full existing offline checks passed (134 passed, 3 live skips), static analysis is clean, and the final Android build succeeded. Native verification found and corrected an initial EPUB stylesheet replacement and the white Android startup background.
+
+See [implementation evidence](../../paper-and-ink-verification.md) for source/APK identity, native screenshots, review findings, decisions and unverified scenarios. The task checkboxes below preserve the original planned steps; their broad manual matrix must not be read as proof that every combination was exercised. The dark-only amendment above supersedes historical light-theme steps. The one-line vendored stylesheet initialization correction is an explicit exception to the original engine exclusion.
 
 ## Global Constraints
 

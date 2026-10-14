@@ -1,6 +1,6 @@
 # Proposed tablet UI designs
 
-Status: Paper & Ink, including its dark companion, was approved for planning on 2026-10-13. No application code, dependencies, or configuration has been changed. The implementation plan awaits review before execution.
+Status: Paper & Ink was approved for planning on 2026-10-13 and implemented as a dark-only app on 2026-10-14. The generated boards below are historical design references. Actual native screenshots and verification limits are in the [implementation evidence](../../paper-and-ink-verification.md).
 
 - [Design specification](../../superpowers/specs/2026-10-13-paper-and-ink-tablet-redesign.md)
 - [Implementation plan](../../superpowers/plans/2026-10-13-paper-and-ink-tablet-redesign.md)
@@ -33,7 +33,7 @@ Each board shows Library and Store together with representative EPUB reader cont
 
 Adapt the existing navigation shell, Library and Store presentation, shared book-cover components, Settings presentation, global themes, and EPUB control overlays. Preserve persistence and the reader location bridge, catalog/download logic, search and filter state, pagination, scroll offsets, and active download state. Keep the reader outside the app shell. Do not introduce a new state-management framework or add tests.
 
-Use responsive constraints: navigation rail at wide tablet widths and the existing three-destination bottom navigation at compact/split-screen widths; preserve cover proportions; reduce columns or switch to single-column tiles before titles and actions become cramped. Retain light/dark/system app appearance and Light/Sepia/Dark reader settings.
+Use responsive constraints: navigation rail at wide tablet widths and three-destination bottom navigation at compact/split-screen widths; preserve cover proportions; reduce columns or switch to single-column tiles before titles and actions become cramped. The app is dark-only per the user's final instruction. Independent Light/Sepia/Dark EPUB reading settings remain.
 
 ## Verification boundaries
 

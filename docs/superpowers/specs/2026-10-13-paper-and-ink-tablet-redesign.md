@@ -16,6 +16,8 @@ Implement the calm editorial typography, warm charcoal/paper surfaces, olive/sag
 
 ## Execution amendment — 2026-10-14
 
+Implementation and native evidence are recorded in [Paper & Ink verification](../../paper-and-ink-verification.md). One necessary exception to the engine exclusion preserves the existing custom CSS argument during EPUB initialization; it fixes the reproduced unreadable dark reopen without changing checkpoint/seek/bridge behavior.
+
 The user authorized implementation and removed the light app theme from scope. Build the dark-only app; remove app appearance switching controls while leaving persisted legacy theme keys untouched. EPUB retains existing reading-color choices and defaults to Dark for a new reader preference. The existing light app mockup is historical context, not an implementation deliverable.
 
 Before implementation, fetched and merged latest origin/main c35ad42 into this branch (merge 4ba67b5). Preserve its real reading-statistics feature, Stats entry point, ReaderActivityScope, root readingRouteObserver, checkpoint/retry/resize recovery, and vendored reader-engine overrides. No changes to statistics storage, time accounting, checkpoint semantics or third_party engines. Statistics receives the shared dark theme, with focused layout fixes only if necessary for text scaling.
