@@ -6,13 +6,15 @@ import 'core/theme/app_theme.dart';
 import 'core/theme/theme_cubit.dart';
 import 'core/services/cache_config.dart';
 import 'data/models/book_model.dart';
+import 'data/statistics/reading_statistics_repository.dart';
+import 'data/statistics/reading_tracker.dart';
 import 'data/repositories/book_repository.dart';
 import 'data/repositories/store_repository.dart';
 import 'data/repositories/settings_repository.dart';
 import 'presentation/library/bloc/library_bloc.dart';
 import 'presentation/navigation/app_router.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Hive
@@ -20,20 +22,59 @@ void main() async {
   Hive.registerAdapter(BookModelAdapter());
   await Hive.openBox<BookModel>('books');
   await Hive.openBox('settings');
+  ReadingStatisticsRepository statistics;
+  try {
+    final statisticsBox = await Hive.openBox('readingStatistics');
+    statistics = ReadingStatisticsRepository(statisticsBox);
+    await statistics.initialize();
+  } catch (error) {
+    debugPrint('Statistics storage unavailable: $error');
+    statistics = ReadingStatisticsRepository.unavailable();
+  }
 
   // Configure caching for better performance
   initializeCacheConfig();
 
-  runApp(const EReaderApp());
+  runApp(EReaderApp(statistics: statistics));
 }
 
-class EReaderApp extends StatelessWidget {
-  const EReaderApp({super.key});
+class EReaderApp extends StatefulWidget {
+  final ReadingStatisticsRepository? statistics;
+  const EReaderApp({super.key, this.statistics});
+
+  @override
+  State<EReaderApp> createState() => _EReaderAppState();
+}
+
+class _EReaderAppState extends State<EReaderApp> {
+  late final ReadingStatisticsRepository _statistics;
+  late final ReadingTracker _tracker;
+  @override
+  void initState() {
+    super.initState();
+    _statistics =
+        widget.statistics ??
+        (Hive.isBoxOpen('readingStatistics')
+            ? ReadingStatisticsRepository(Hive.box('readingStatistics'))
+            : ReadingStatisticsRepository.unavailable());
+    _tracker = ReadingTracker(_statistics);
+  }
+
+  @override
+  void dispose() {
+    _tracker.dispose();
+    _statistics.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
+        RepositoryProvider<ReadingStatisticsRepository>.value(
+          value: _statistics,
+        ),
+        RepositoryProvider<ReadingTracker>.value(value: _tracker),
         RepositoryProvider<BookRepository>(create: (_) => BookRepository()),
         RepositoryProvider<StoreRepository>(create: (_) => StoreRepository()),
         RepositoryProvider<SettingsRepository>(

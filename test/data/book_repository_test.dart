@@ -84,6 +84,59 @@ void main() {
     },
   );
   test(
+    'queued checkpoints remain coherent after reopening the library',
+    () async {
+      await box.put(
+        'checkpoint',
+        BookModel(
+          id: 'checkpoint',
+          title: 'Checkpoint',
+          author: 'Author',
+          localPath: 'book.epub',
+          format: 'epub',
+        ),
+      );
+      final other = BookRepository(booksBox: box);
+      final writes = [
+        repository.updateReadingProgress(
+          bookId: 'checkpoint',
+          page: 0,
+          progress: 0.3,
+          cfi: 'epubcfi(/6/2)',
+          epubViewport: {
+            'offset': -8.0,
+            'layout': {'fontSize': '18px'},
+          },
+        ),
+        other.updateReadingProgress(
+          bookId: 'checkpoint',
+          page: 0,
+          progress: 0.7,
+          cfi: 'epubcfi(/6/4)',
+          epubViewport: {
+            'offset': -15.0,
+            'layout': {'fontSize': '20px'},
+          },
+        ),
+      ];
+      await Future.wait(writes);
+      await box.close();
+      box = await Hive.openBox<BookModel>('books');
+      final saved = box.get('checkpoint')!;
+      expect(saved.lastReadCfi, 'epubcfi(/6/4)');
+      expect(saved.lastReadProgress, 0.7);
+      expect(saved.epubCheckpoint, {
+        'version': 1,
+        'revision': 2,
+        'cfi': 'epubcfi(/6/4)',
+        'progress': 0.7,
+        'offset': -15.0,
+        'layout': {'fontSize': '20px'},
+      });
+    },
+  );
+
+  test(
     'imports preserve Unicode EPUB metadata and cannot overwrite same-name books',
     () async {
       final archive = Archive()

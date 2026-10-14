@@ -33,13 +33,14 @@ class BookModelAdapter extends TypeAdapter<BookModel> {
       md5: fields[13] as String?,
       fileSize: fields[14] as int?,
       storeBookId: fields[15] as String?,
+      epubCheckpoint: (fields[16] as Map?)?.cast<String, dynamic>(),
     );
   }
 
   @override
   void write(BinaryWriter writer, BookModel obj) {
     writer
-      ..writeByte(16)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -71,7 +72,9 @@ class BookModelAdapter extends TypeAdapter<BookModel> {
       ..writeByte(14)
       ..write(obj.fileSize)
       ..writeByte(15)
-      ..write(obj.storeBookId);
+      ..write(obj.storeBookId)
+      ..writeByte(16)
+      ..write(obj.epubCheckpoint);
   }
 
   @override

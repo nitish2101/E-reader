@@ -2,6 +2,8 @@ analyzer:
   exclude:
     - build/**
     - android/**
+    # Unmodified upstream Dart implementation; native lifecycle patch builds on Android.
+    - third_party/flutter_inappwebview_android/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

@@ -1,0 +1,129 @@
+// Run with Node.js: node --test test/reader/epub_location_bridge_test.js
+// Execute the shipped bridge, rather than copying its resize state machine.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+const vm = require('node:vm');
+
+const dartSource = fs.readFileSync(
+  path.join(__dirname, '../../lib/presentation/reader/epub_location_bridge.dart'),
+  'utf8',
+);
+const script = dartSource.match(/const epubLocationBridgeScript = r'''([\s\S]*?)''';/)[1];
+
+function createViewer(display = async () => {}) {
+  let currentCfi = 'epubcfi(A)';
+  const displays = [];
+  const inputHandlers = new Map();
+  const nativeCalls = [];
+  let instant = 0;
+  let contentHook;
+  const chapterDocument = { body: {}, addEventListener: (name, callback) => inputHandlers.set(name, callback) };
+  const view = {
+    index: 0,
+    contents: {
+      document: chapterDocument,
+      window: { getComputedStyle: () => ({ fontSize: '18px', lineHeight: '27px' }) },
+    },
+    iframe: { getBoundingClientRect: () => ({ top: 0 }) },
+  };
+  const manager = {
+    container: {
+      style: {},
+      clientWidth: 400,
+      clientHeight: 800,
+      getBoundingClientRect: () => ({ top: 0 }),
+      addEventListener: () => {},
+    },
+    settings: { fullsize: false },
+    visible: () => [view],
+    currentLocation: () => ({
+      start: { cfi: currentCfi, index: 0, percentage: 0.4 },
+      end: { cfi: currentCfi },
+    }),
+    resize: () => {},
+    scrollBy: () => {},
+  };
+  const context = {
+    window: { devicePixelRatio: 1, flutter_inappwebview: { callHandler: (...args) => nativeCalls.push(args) } },
+    performance: { now: () => instant },
+    document: { documentElement: { style: {} } },
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (callback) => queueMicrotask(callback),
+    rendition: {
+      manager,
+      getContents: () => [view.contents],
+      hooks: { content: { register: (hook) => { contentHook = hook; } } },
+      located: (location) => location,
+      getRange: () => ({
+        startContainer: { ownerDocument: chapterDocument },
+        getBoundingClientRect: () => ({ top: 0 }),
+      }),
+      on: () => {},
+      display: async (cfi) => { displays.push(cfi); await display(cfi); },
+      reportLocation: () => {},
+    },
+  };
+  vm.runInNewContext(script, context);
+  return {
+    bridge: context.window,
+    manager,
+    displays,
+    nativeCalls,
+    input: (name, trusted, time) => { instant = time; inputHandlers.get(name)({ isTrusted: trusted }); },
+    observeChapter: (document) => contentHook({ document }),
+    read: (cfi) => {
+      currentCfi = cfi;
+      context.window._ereaderSnapshot();
+    },
+  };
+}
+
+test('resize during reflow cannot retain a stale anchor for a later resize', async () => {
+  const viewer = createViewer();
+  viewer.read('epubcfi(A)');
+  const reflow = viewer.bridge._ereaderReflow(() => {});
+  // A window resize races a font change or an earlier resize restoration.
+  viewer.manager.resize();
+  await reflow;
+
+  viewer.read('epubcfi(B)');
+  viewer.manager.resize();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  assert.equal(viewer.bridge._ereaderLastConfirmed.startCfi, 'epubcfi(B)');
+  assert.equal(viewer.displays.at(-1), 'epubcfi(B)');
+  assert.equal(viewer.bridge._ereaderBusy, false);
+});
+
+test('pending resize display keeps the confirmed snapshot and blocks transient saves', async () => {
+  const viewer = createViewer(() => new Promise(() => {}));
+  viewer.read('epubcfi(A)');
+  viewer.manager.resize();
+  viewer.read('epubcfi(B)');
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  assert.equal(viewer.displays.at(-1), 'epubcfi(A)');
+  assert.equal(viewer.bridge._ereaderLastConfirmed.startCfi, 'epubcfi(A)');
+  assert.equal(viewer.bridge._ereaderSnapshot(), null);
+  assert.equal(viewer.bridge._ereaderBusy, true);
+  // Dart's independent native-handler watchdog exposes recovery for this state.
+  // JavaScript must not release busy or save the transient B while display hangs.
+});
+
+
+test('trusted input wakes the activity clock, synthetic events and relocation do not', () => {
+  const viewer = createViewer();
+  viewer.read('epubcfi(A)');
+  viewer.input('pointerdown', false, 0);
+  assert.equal(viewer.nativeCalls.filter(([name]) => name === 'ereaderActivity').length, 0);
+  viewer.input('touchstart', true, 0);
+  viewer.input('touchmove', true, 500);
+  viewer.input('touchmove', true, 1000);
+  assert.equal(viewer.nativeCalls.filter(([name]) => name === 'ereaderActivity').length, 2);
+  const chapterEvents = new Map();
+  viewer.observeChapter({ addEventListener: (name, callback) => chapterEvents.set(name, callback) });
+  assert.equal(chapterEvents.size, 6);
+});
