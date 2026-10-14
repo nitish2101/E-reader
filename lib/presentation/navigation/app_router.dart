@@ -6,10 +6,13 @@ import '../settings/settings_screen.dart';
 import '../reader/pdf_reader_screen.dart';
 import '../reader/epub_reader_screen.dart';
 import 'home_screen.dart';
+import '../statistics/statistics_screen.dart';
+import '../statistics/reader_activity_scope.dart';
 
 class AppRouter {
   static final GoRouter router = GoRouter(
     initialLocation: '/',
+    observers: [readingRouteObserver],
     routes: [
       // Home with bottom navigation
       ShellRoute(
@@ -31,6 +34,10 @@ class AppRouter {
                 const NoTransitionPage(child: SettingsScreen()),
           ),
         ],
+      ),
+      GoRoute(
+        path: '/stats',
+        builder: (context, state) => const StatisticsScreen(),
       ),
       // Reader routes (outside shell for fullscreen)
       GoRoute(

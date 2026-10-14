@@ -15,7 +15,11 @@ const script = dartSource.match(/const epubLocationBridgeScript = r'''([\s\S]*?)
 function createViewer(display = async () => {}) {
   let currentCfi = 'epubcfi(A)';
   const displays = [];
-  const chapterDocument = { body: {} };
+  const inputHandlers = new Map();
+  const nativeCalls = [];
+  let instant = 0;
+  let contentHook;
+  const chapterDocument = { body: {}, addEventListener: (name, callback) => inputHandlers.set(name, callback) };
   const view = {
     index: 0,
     contents: {
@@ -42,13 +46,16 @@ function createViewer(display = async () => {}) {
     scrollBy: () => {},
   };
   const context = {
-    window: { devicePixelRatio: 1, flutter_inappwebview: { callHandler: () => {} } },
+    window: { devicePixelRatio: 1, flutter_inappwebview: { callHandler: (...args) => nativeCalls.push(args) } },
+    performance: { now: () => instant },
     document: { documentElement: { style: {} } },
     setTimeout,
     clearTimeout,
     requestAnimationFrame: (callback) => queueMicrotask(callback),
     rendition: {
       manager,
+      getContents: () => [view.contents],
+      hooks: { content: { register: (hook) => { contentHook = hook; } } },
       located: (location) => location,
       getRange: () => ({
         startContainer: { ownerDocument: chapterDocument },
@@ -64,6 +71,9 @@ function createViewer(display = async () => {}) {
     bridge: context.window,
     manager,
     displays,
+    nativeCalls,
+    input: (name, trusted, time) => { instant = time; inputHandlers.get(name)({ isTrusted: trusted }); },
+    observeChapter: (document) => contentHook({ document }),
     read: (cfi) => {
       currentCfi = cfi;
       context.window._ereaderSnapshot();
@@ -101,4 +111,19 @@ test('pending resize display keeps the confirmed snapshot and blocks transient s
   assert.equal(viewer.bridge._ereaderBusy, true);
   // Dart's independent native-handler watchdog exposes recovery for this state.
   // JavaScript must not release busy or save the transient B while display hangs.
+});
+
+
+test('trusted input wakes the activity clock, synthetic events and relocation do not', () => {
+  const viewer = createViewer();
+  viewer.read('epubcfi(A)');
+  viewer.input('pointerdown', false, 0);
+  assert.equal(viewer.nativeCalls.filter(([name]) => name === 'ereaderActivity').length, 0);
+  viewer.input('touchstart', true, 0);
+  viewer.input('touchmove', true, 500);
+  viewer.input('touchmove', true, 1000);
+  assert.equal(viewer.nativeCalls.filter(([name]) => name === 'ereaderActivity').length, 2);
+  const chapterEvents = new Map();
+  viewer.observeChapter({ addEventListener: (name, callback) => chapterEvents.set(name, callback) });
+  assert.equal(chapterEvents.size, 6);
 });

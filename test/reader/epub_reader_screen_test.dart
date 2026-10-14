@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:ereader/data/models/book_model.dart';
+import 'package:ereader/data/statistics/reading_statistics_repository.dart';
+import 'package:ereader/data/statistics/reading_tracker.dart';
 import 'package:ereader/data/repositories/book_repository.dart';
 import 'package:ereader/presentation/reader/epub_reader_screen.dart';
+import 'package:ereader/presentation/statistics/reader_activity_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
@@ -91,6 +94,10 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
       return pendingRestore?.future ??
           Future.value(CallAsyncJavaScriptResult(value: restoreSucceeds));
     }
+    if (arguments.containsKey('href')) {
+      seekArguments = arguments;
+      return completed.future;
+    }
     if (functionBody.contains("_ereaderSnapshot")) {
       return Future.value(CallAsyncJavaScriptResult(value: snapshot));
     }
@@ -102,10 +109,37 @@ class _SeekWebViewController extends PlatformInAppWebViewController {
   void dispose({bool isKeepAlive = false}) {}
 }
 
+class _NavigationWebViewController extends _SeekWebViewController {
+  final chapterCompleted = Completer<CallAsyncJavaScriptResult?>();
+  int chapterCalls = 0;
+  int fontCalls = 0;
+
+  @override
+  Future<CallAsyncJavaScriptResult?> callAsyncJavaScript({
+    required String functionBody,
+    Map<String, dynamic> arguments = const {},
+    ContentWorld? contentWorld,
+  }) {
+    if (arguments.containsKey('href')) {
+      chapterCalls++;
+      return chapterCompleted.future;
+    }
+    if (arguments.containsKey('size')) fontCalls++;
+    return super.callAsyncJavaScript(
+      functionBody: functionBody,
+      arguments: arguments,
+      contentWorld: contentWorld,
+    );
+  }
+}
+
 void main() {
   late Directory temp;
   late Box<BookModel> books;
   late BookRepository repository;
+  late ReadingStatisticsRepository statistics;
+  late ReadingTracker tracker;
+  var statisticsElapsed = Duration.zero;
 
   setUpAll(() {
     Hive.registerAdapter(BookModelAdapter());
@@ -116,6 +150,11 @@ void main() {
     Hive.init(temp.path);
     books = await Hive.openBox<BookModel>('books');
     await Hive.openBox('settings');
+    statistics = ReadingStatisticsRepository(
+      await Hive.openBox('readingStatistics'),
+    );
+    statisticsElapsed = Duration.zero;
+    tracker = ReadingTracker(statistics, elapsed: () => statisticsElapsed);
     await File('${temp.path}/book.epub').writeAsBytes([80, 75]);
     await books.put(
       'book',
@@ -132,6 +171,9 @@ void main() {
     repository = BookRepository(booksBox: books);
   });
   tearDown(() async {
+    tracker.dispose();
+    await statistics.flush();
+    statistics.dispose();
     await Hive.close();
     await temp.delete(recursive: true);
   });
@@ -146,7 +188,13 @@ void main() {
       await tester.pumpWidget(
         RepositoryProvider.value(
           value: repository,
-          child: const MaterialApp(home: EpubReaderScreen(bookId: 'book')),
+          child: RepositoryProvider.value(
+            value: tracker,
+            child: MaterialApp(
+              navigatorObservers: [readingRouteObserver],
+              home: const EpubReaderScreen(bookId: 'book'),
+            ),
+          ),
         ),
       );
       await tester
@@ -699,7 +747,13 @@ void main() {
         await tester.pumpWidget(
           RepositoryProvider.value(
             value: repository,
-            child: const MaterialApp(home: EpubReaderScreen(bookId: 'book')),
+            child: RepositoryProvider.value(
+              value: tracker,
+              child: MaterialApp(
+                navigatorObservers: [readingRouteObserver],
+                home: const EpubReaderScreen(bookId: 'book'),
+              ),
+            ),
           ),
         );
         await tester
@@ -1004,4 +1058,634 @@ void main() {
       }
     },
   );
+  testWidgets('drawer close cannot resume timing during chapter navigation', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      final viewer = await open(tester, native: native);
+      viewer.onChaptersLoaded!([
+        EpubChapter(
+          title: 'Next chapter',
+          href: 'chapter2.xhtml',
+          id: 'chapter2',
+          subitems: [],
+        ),
+      ]);
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 10);
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.list));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Next chapter'));
+        await tester.pumpAndSettle();
+        statisticsElapsed = const Duration(seconds: 30);
+        tracker.checkpoint();
+        await statistics.flush();
+      });
+      expect(statistics.total.inSeconds, 10);
+      native.completed.complete(
+        CallAsyncJavaScriptResult(
+          value: {
+            ...location(0.8).toJson(),
+            'sequence': 5,
+            'offset': -4.0,
+            'layout': {'fontSize': '18px'},
+          },
+        ),
+      );
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 40);
+      await close(tester);
+      expect(statistics.total.inSeconds, 20);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets('chapter bridge errors show a recoverable message', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      final viewer = await open(tester, native: native);
+      viewer.onChaptersLoaded!([
+        EpubChapter(
+          title: 'Missing chapter',
+          href: 'missing.xhtml',
+          id: 'missing',
+          subitems: [],
+        ),
+      ]);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.list));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Missing chapter'));
+      await tester.pumpAndSettle();
+      native.completed.complete(
+        CallAsyncJavaScriptResult(error: 'Missing chapter'),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Could not open that chapter. Retry to restore your last checkpoint.',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets('held slider drag and pending seek do not count as reading', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      final slider = tester.widget<Slider>(find.byType(Slider));
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 10);
+        slider.onChangeStart!(0.2);
+        slider.onChanged!(0.8);
+        statisticsElapsed = const Duration(seconds: 40);
+        tracker.checkpoint();
+        await statistics.flush();
+      });
+      expect(statistics.total.inSeconds, 10);
+      expect(books.get('book')!.lastReadProgress, 0.2);
+      slider.onChangeEnd!(0.8);
+      await tester.pump();
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 60);
+        tracker.checkpoint();
+        await statistics.flush();
+      });
+      expect(statistics.total.inSeconds, 10);
+      native.completed.complete(
+        CallAsyncJavaScriptResult(
+          value: {...location(0.8).toJson(), 'sequence': 5},
+        ),
+      );
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 70);
+      await close(tester);
+      expect(statistics.total.inSeconds, 20);
+      expect(books.get('book')!.lastReadProgress, 0.8);
+    } finally {
+      await close(tester);
+    }
+  });
+  testWidgets('failed seek releases drag timing only after failure completes', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      final slider = tester.widget<Slider>(find.byType(Slider));
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 10);
+        slider.onChangeStart!(0.2);
+        statisticsElapsed = const Duration(seconds: 40);
+        slider.onChangeEnd!(0.8);
+      });
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 50);
+      native.completed.complete(
+        CallAsyncJavaScriptResult(error: 'Navigation failed'),
+      );
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 60);
+      await close(tester);
+      expect(statistics.total.inSeconds, 20);
+      expect(books.get('book')!.lastReadProgress, 0.2);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets(
+    'renderer recovery counts only after confirmed replacement restoration',
+    (tester) async {
+      try {
+        final oldNative = _SeekWebViewController();
+        final oldViewer = await open(tester, native: oldNative);
+        await tester.runAsync(() async {
+          statisticsElapsed = const Duration(seconds: 10);
+          oldViewer.onRendererTerminated!();
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+        });
+        await tester.pump();
+        final replacement = tester.widget<EpubViewer>(find.byType(EpubViewer));
+        final restored = Completer<CallAsyncJavaScriptResult?>();
+        final newNative = _SeekWebViewController()..pendingRestore = restored;
+        replacement.epubController.setWebViewController(
+          InAppWebViewController.fromPlatform(platform: newNative),
+        );
+        statisticsElapsed = const Duration(seconds: 40);
+        replacement.onEpubLoaded!();
+        await tester.pump();
+        oldViewer.onEpubLoaded!();
+        oldViewer.onRelocated!(location(0.99));
+        oldNative.handlers['ereaderActivity']!([]);
+        await tester.runAsync(() async {
+          statisticsElapsed = const Duration(seconds: 70);
+          tracker.checkpoint();
+          await statistics.flush();
+        });
+        expect(statistics.total.inSeconds, 10);
+        restored.complete(CallAsyncJavaScriptResult(value: true));
+        await tester.pump();
+        statisticsElapsed = const Duration(seconds: 80);
+        await close(tester);
+        expect(statistics.total.inSeconds, 20);
+        expect(books.get('book')!.lastReadProgress, 0.2);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+
+  testWidgets('load error and failed retry restoration never restart timing', (
+    tester,
+  ) async {
+    try {
+      final viewer = await open(tester, native: _SeekWebViewController());
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 10);
+        viewer.onLoadError!('Failed renderer');
+        await statistics.flush();
+      });
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 40);
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+      final replacement = tester.widget<EpubViewer>(find.byType(EpubViewer));
+      final failed = _SeekWebViewController()..restoreSucceeds = false;
+      replacement.epubController.setWebViewController(
+        InAppWebViewController.fromPlatform(platform: failed),
+      );
+      replacement.onEpubLoaded!();
+      await tester.pump();
+      failed.handlers['ereaderReflow']!([false]);
+      failed.handlers['ereaderActivity']!([]);
+      statisticsElapsed = const Duration(seconds: 100);
+      await close(tester);
+      expect(statistics.total.inSeconds, 10);
+      expect(books.get('book')!.lastReadProgress, 0.2);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets('old viewer activity cannot wake an idle replacement', (
+    tester,
+  ) async {
+    try {
+      final oldNative = _SeekWebViewController();
+      final oldViewer = await open(tester, native: oldNative);
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 10);
+        oldViewer.onRendererTerminated!();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      });
+      await tester.pump();
+      final replacement = tester.widget<EpubViewer>(find.byType(EpubViewer));
+      final currentNative = _SeekWebViewController();
+      replacement.epubController.setWebViewController(
+        InAppWebViewController.fromPlatform(platform: currentNative),
+      );
+      statisticsElapsed = const Duration(seconds: 40);
+      replacement.onEpubLoaded!();
+      await tester.pump();
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 640);
+        tracker.checkpoint();
+        oldNative.handlers['ereaderActivity']!([]);
+        oldNative.handlers['ereaderReflow']!([false]);
+        oldViewer.onLocationLoaded!();
+        statisticsElapsed = const Duration(seconds: 670);
+        tracker.checkpoint();
+        await statistics.flush();
+      });
+      expect(statistics.total.inSeconds, 310);
+      currentNative.handlers['ereaderActivity']!([]);
+      statisticsElapsed = const Duration(seconds: 680);
+      await close(tester);
+      expect(statistics.total.inSeconds, 320);
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets(
+    'resize reflow pauses timing until confirmed passage restoration',
+    (tester) async {
+      try {
+        final native = _SeekWebViewController();
+        await open(tester, native: native);
+        await tester.runAsync(() async {
+          statisticsElapsed = const Duration(seconds: 10);
+          native.handlers['ereaderReflow']!([true]);
+          statisticsElapsed = const Duration(seconds: 40);
+          native.handlers['ereaderActivity']!([]);
+          tracker.checkpoint();
+          await statistics.flush();
+        });
+        expect(statistics.total.inSeconds, 10);
+        native.handlers['ereaderReflow']!([false]);
+        statisticsElapsed = const Duration(seconds: 50);
+        await close(tester);
+        expect(statistics.total.inSeconds, 20);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+
+  // The unchanged reliability reader reproduces Flutter's SemanticsGeometry
+  // assertion when a slider is disabled beneath a modal. This case isolates
+  // timing; accessibility/native limits are recorded in verification notes.
+  testWidgets('closing settings cannot resume a pending font restoration', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 10);
+        await tester.tap(find.byIcon(Icons.text_format));
+        await tester.pumpAndSettle();
+        statisticsElapsed = const Duration(seconds: 20);
+        tester
+            .widget<IconButton>(
+              find.widgetWithIcon(IconButton, Icons.add_circle_outline),
+            )
+            .onPressed!();
+        await tester.pump();
+        Navigator.of(tester.element(find.text('Reading Settings'))).pop();
+        await tester.pumpAndSettle();
+        statisticsElapsed = const Duration(seconds: 70);
+        // The JS notification can precede completion of the font operation.
+        native.handlers['ereaderReflow']!([false]);
+        tracker.checkpoint();
+        await statistics.flush();
+      });
+      expect(statistics.total.inSeconds, 10);
+      await tester.runAsync(() async {
+        native.completed.complete(CallAsyncJavaScriptResult(value: true));
+        await tester.pump();
+      });
+      statisticsElapsed = const Duration(seconds: 80);
+      await close(tester);
+      expect(statistics.total.inSeconds, 20);
+      expect(books.get('book')!.lastReadCfi, 'epubcfi(/6/2!/4/2/1:0)');
+    } finally {
+      await close(tester);
+    }
+  });
+
+  testWidgets(
+    'stale seek completion cannot release a replacement slider drag',
+    (tester) async {
+      try {
+        final oldNative = _SeekWebViewController();
+        final oldViewer = await open(tester, native: oldNative);
+        final oldSlider = tester.widget<Slider>(find.byType(Slider));
+        await tester.runAsync(() async {
+          statisticsElapsed = const Duration(seconds: 10);
+          oldSlider.onChangeStart!(0.2);
+          oldSlider.onChangeEnd!(0.8);
+          statisticsElapsed = const Duration(seconds: 20);
+          oldViewer.onRendererTerminated!();
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+        });
+        await tester.pump();
+        final replacement = tester.widget<EpubViewer>(find.byType(EpubViewer));
+        final currentNative = _SeekWebViewController();
+        replacement.epubController.setWebViewController(
+          InAppWebViewController.fromPlatform(platform: currentNative),
+        );
+        statisticsElapsed = const Duration(seconds: 40);
+        replacement.onEpubLoaded!();
+        await tester.pump();
+        replacement.onLocationLoaded!();
+        await tester.pump();
+        final slider = tester.widget<Slider>(find.byType(Slider));
+        await tester.runAsync(() async {
+          statisticsElapsed = const Duration(seconds: 50);
+          slider.onChangeStart!(0.2);
+          oldNative.completed.complete(
+            CallAsyncJavaScriptResult(
+              value: {...location(0.99).toJson(), 'sequence': 100},
+            ),
+          );
+          await tester.pump();
+          statisticsElapsed = const Duration(seconds: 80);
+          tracker.checkpoint();
+          await statistics.flush();
+        });
+        expect(statistics.total.inSeconds, 20);
+        expect(books.get('book')!.lastReadProgress, 0.2);
+        slider.onChangeEnd!(0.7);
+        currentNative.completed.complete(
+          CallAsyncJavaScriptResult(
+            value: {...location(0.7).toJson(), 'sequence': 1},
+          ),
+        );
+        await tester.pump();
+        statisticsElapsed = const Duration(seconds: 90);
+        await close(tester);
+        expect(statistics.total.inSeconds, 30);
+        expect(books.get('book')!.lastReadProgress, 0.7);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+
+  testWidgets(
+    'unresolved chapter display exposes retry and preserves confirmed history',
+    (tester) async {
+      try {
+        await tester.runAsync(() async {
+          await repository.updateReadingProgress(
+            bookId: 'book',
+            page: 0,
+            progress: 0.2,
+            cfi: books.get('book')!.lastReadCfi,
+            epubViewport: {
+              'offset': -7.0,
+              'layout': {'fontSize': '18px'},
+            },
+          );
+        });
+        final native = _SeekWebViewController();
+        final viewer = await open(tester, native: native);
+        viewer.onChaptersLoaded!([
+          EpubChapter(
+            title: 'Pending chapter',
+            href: 'pending.xhtml',
+            id: 'pending',
+            subitems: [],
+          ),
+        ]);
+        await tester.pump();
+        await tester.runAsync(() async {
+          statisticsElapsed = const Duration(seconds: 10);
+          await tester.tap(find.byIcon(Icons.list));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Pending chapter'));
+          await tester.pumpAndSettle();
+          native.snapshot = {
+            ...location(0.99).toJson(),
+            'sequence': 42,
+            'offset': 200.0,
+          };
+          native.handlers['ereaderRelocated']!([native.snapshot!]);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          await books.flush();
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          statisticsElapsed = const Duration(seconds: 70);
+          // Real periodic/background capture and the real navigation deadline.
+          await Future<void>.delayed(const Duration(seconds: 11));
+          tracker.checkpoint();
+          await statistics.flush();
+          await books.flush();
+        });
+        await tester.pump();
+        expect(find.text('Retry'), findsOneWidget);
+        expect(statistics.total.inSeconds, 10);
+        expect(books.get('book')!.lastReadProgress, 0.2);
+        expect(books.get('book')!.epubCheckpoint!['offset'], -7.0);
+        native.completed.complete(
+          CallAsyncJavaScriptResult(value: native.snapshot),
+        );
+        native.handlers['ereaderReflow']!([false]);
+        native.handlers['ereaderRelocated']!([native.snapshot!]);
+        await tester.pump();
+        statisticsElapsed = const Duration(seconds: 100);
+        await close(tester);
+        expect(statistics.total.inSeconds, 10);
+        expect(books.get('book')!.lastReadProgress, 0.2);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+  Future<void> selectChapter(WidgetTester tester, EpubViewer viewer) async {
+    viewer.onChaptersLoaded!([
+      EpubChapter(
+        title: 'Slow chapter',
+        href: 'slow.xhtml',
+        id: 'slow',
+        subitems: [],
+      ),
+    ]);
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.list));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(() => tester.tap(find.text('Slow chapter')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  testWidgets(
+    'pending chapter disables seeks and rejects retained slider callbacks',
+    (tester) async {
+      try {
+        final native = _NavigationWebViewController();
+        final viewer = await open(tester, native: native);
+        final previousSlider = tester.widget<Slider>(find.byType(Slider));
+        await selectChapter(tester, viewer);
+        expect(tester.widget<Slider>(find.byType(Slider)).onChangeEnd, isNull);
+        previousSlider.onChangeStart!(0.2);
+        previousSlider.onChanged!(0.8);
+        previousSlider.onChangeEnd!(0.8);
+        await tester.pump();
+        expect(native.seekArguments, isNull);
+        await tester.runAsync(() async {
+          native.chapterCompleted.complete(
+            CallAsyncJavaScriptResult(
+              value: {...location(0.3).toJson(), 'sequence': 4},
+            ),
+          );
+        });
+        await tester.pump();
+        expect(
+          tester.widget<Slider>(find.byType(Slider)).onChangeEnd,
+          isNotNull,
+        );
+        await close(tester);
+        expect(books.get('book')!.lastReadProgress, 0.3);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+
+  testWidgets(
+    'chapter navigation cannot interrupt an unfinished percentage seek',
+    (tester) async {
+      try {
+        final native = _NavigationWebViewController();
+        final viewer = await open(tester, native: native);
+        final slider = tester.widget<Slider>(find.byType(Slider));
+        await tester.runAsync(() async {
+          slider.onChangeStart!(0.2);
+          slider.onChangeEnd!(0.8);
+        });
+        await tester.pump();
+        await selectChapter(tester, viewer);
+        expect(native.chapterCalls, 0);
+        await tester.runAsync(() async {
+          native.completed.complete(
+            CallAsyncJavaScriptResult(
+              value: {...location(0.8).toJson(), 'sequence': 5},
+            ),
+          );
+        });
+        await tester.pump();
+        await close(tester);
+        expect(books.get('book')!.lastReadProgress, 0.8);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+
+  testWidgets(
+    'outdated chapter response preserves the newer confirmed checkpoint',
+    (tester) async {
+      try {
+        final native = _NavigationWebViewController();
+        final viewer = await open(tester, native: native);
+        native.handlers['ereaderRelocated']!([
+          {...location(0.8).toJson(), 'sequence': 5},
+        ]);
+        await tester.pump();
+        await selectChapter(tester, viewer);
+        await tester.runAsync(() async {
+          native.chapterCompleted.complete(
+            CallAsyncJavaScriptResult(
+              value: {...location(0.3).toJson(), 'sequence': 4},
+            ),
+          );
+        });
+        await tester.pump();
+        expect(find.text('Retry'), findsOneWidget);
+        await close(tester);
+        expect(books.get('book')!.lastReadProgress, 0.8);
+      } finally {
+        await close(tester);
+      }
+    },
+  );
+  testWidgets('font changes wait for pending chapter navigation', (
+    tester,
+  ) async {
+    try {
+      final native = _NavigationWebViewController();
+      final viewer = await open(tester, native: native);
+      await selectChapter(tester, viewer);
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.text_format));
+        await tester.pumpAndSettle();
+        tester
+            .widget<IconButton>(
+              find.widgetWithIcon(IconButton, Icons.add_circle_outline),
+            )
+            .onPressed!();
+        await tester.pump();
+      });
+      expect(native.fontCalls, 0);
+      native.chapterCompleted.complete(
+        CallAsyncJavaScriptResult(
+          value: {...location(0.3).toJson(), 'sequence': 4},
+        ),
+      );
+      await tester.pump();
+      await close(tester);
+      expect(books.get('book')!.lastReadProgress, 0.3);
+    } finally {
+      await close(tester);
+    }
+  });
+  testWidgets('resize cancels a slider drag and resumes timing after reflow', (
+    tester,
+  ) async {
+    try {
+      final native = _SeekWebViewController();
+      await open(tester, native: native);
+      final oldSlider = tester.widget<Slider>(find.byType(Slider));
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 10);
+        oldSlider.onChangeStart!(0.2);
+        oldSlider.onChanged!(0.8);
+        statisticsElapsed = const Duration(seconds: 30);
+        native.handlers['ereaderReflow']!([true]);
+        oldSlider.onChangeEnd!(0.8);
+      });
+      await tester.pump();
+      expect(native.seekArguments, isNull);
+      expect(tester.widget<Slider>(find.byType(Slider)).value, 0.2);
+      await tester.runAsync(() async {
+        statisticsElapsed = const Duration(seconds: 40);
+        native.handlers['ereaderReflow']!([false]);
+      });
+      await tester.pump();
+      statisticsElapsed = const Duration(seconds: 50);
+      await close(tester);
+      expect(statistics.total.inSeconds, 20);
+      expect(books.get('book')!.lastReadProgress, 0.2);
+    } finally {
+      await close(tester);
+    }
+  });
 }

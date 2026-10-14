@@ -71,6 +71,24 @@ const epubLocationBridgeScript = r'''
     if (data) window.flutter_inappwebview.callHandler('ereaderRelocated', data);
   });
 
+  // Passive listeners preserve the engine's touch/scroll behavior. Only
+  // trusted input wakes an idle clock; automatic relocations never do.
+  var lastActivity = -Infinity;
+  function activity(event) {
+    if (!event.isTrusted) return;
+    var instant = performance.now();
+    if (instant - lastActivity < 1000) return;
+    lastActivity = instant;
+    window.flutter_inappwebview.callHandler('ereaderActivity');
+  }
+  function observeInput(contents) {
+    ['touchstart', 'touchmove', 'pointerdown', 'pointermove', 'wheel', 'keydown'].forEach(function(name) {
+      contents.document.addEventListener(name, activity, {passive: true});
+    });
+  }
+  rendition.getContents().forEach(observeInput);
+  rendition.hooks.content.register(observeInput);
+
   function frames() { return new Promise(function(resolve) {
     requestAnimationFrame(function() { requestAnimationFrame(resolve); });
   }); }

@@ -8,6 +8,7 @@ import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:hive/hive.dart';
 import '../../data/repositories/book_repository.dart';
 import 'epub_location_bridge.dart';
+import '../statistics/reader_activity_scope.dart';
 import 'widgets/dictionary_dialog.dart';
 
 typedef _ProgressView = ({double progress, bool canSeek, bool animate});
@@ -32,6 +33,10 @@ class EpubReaderScreen extends StatefulWidget {
 
 class _EpubReaderScreenState extends State<EpubReaderScreen>
     with WidgetsBindingObserver {
+  final _readingActivity = ReaderActivityController();
+  bool _isChapterLoading = false;
+  bool _drawerOpen = false;
+
   // EPUB controller
   EpubController? _epubController;
 
@@ -200,6 +205,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     _viewerGeneration++;
     unawaited(_saveProgressNow());
     _progressView.dispose();
+    _readingActivity.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -244,6 +250,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     if (!_isEpubLoading &&
         !_isPreparingLocationBridge &&
         !_isSeeking &&
+        !_isChapterLoading &&
         !_isReflowing &&
         !_rendererFailed) {
       try {
@@ -257,6 +264,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             generation == _viewerGeneration &&
             !_isReflowing &&
             !_isSeeking &&
+            !_isChapterLoading &&
             !_rendererFailed &&
             result is Map) {
           final data = Map<String, dynamic>.from(result);
@@ -280,6 +288,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Future<void> _closeReader() async {
     if (_isClosing) return;
     _isClosing = true;
+    _syncReadingActivity();
     _periodicCheckpoint?.cancel();
     _saveDebounceTimer?.cancel();
     await _captureFreshAndSave();
@@ -305,17 +314,25 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     unawaited(_setProgressReporting());
   }
 
+  // Native navigation/reflow must finish before another operation can move
+  // the passage. Check this again inside callbacks retained by older controls.
+  bool get _navigationBlocked =>
+      _isEpubLoading ||
+      _isPreparingLocationBridge ||
+      _isSeeking ||
+      _isChapterLoading ||
+      _typographyChangePending ||
+      _isReflowing ||
+      _rendererFailed ||
+      _isClosing ||
+      _loadError != null;
+
+  bool get _canSeek => _locationsReady && !_navigationBlocked;
+
   void _publishProgress() {
     _progressView.value = (
       progress: _previewProgress ?? _progress,
-      canSeek:
-          _locationsReady &&
-          !_isEpubLoading &&
-          !_isPreparingLocationBridge &&
-          !_isSeeking &&
-          !_typographyChangePending &&
-          !_isReflowing &&
-          !_rendererFailed,
+      canSeek: _canSeek,
       animate: !_isSliderDragging && !_isSeeking,
     );
   }
@@ -374,6 +391,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           if (!mounted ||
               generation != _viewerGeneration ||
               _rendererFailed ||
+              _isChapterLoading ||
               !_usesDirectLocationEvents ||
               args.isEmpty ||
               args.first is! Map) {
@@ -416,6 +434,13 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           }
           _isReflowing = args.isNotEmpty && args.first == true;
           if (_isReflowing) {
+            // Resizing invalidates the drag; a replaced slider may never send
+            // its end callback. Discard the preview and unblock after reflow.
+            _isSliderDragging = false;
+            _previewProgress = null;
+          }
+          _syncReadingActivity();
+          if (_isReflowing) {
             _startReflowTimer(generation);
           } else {
             _reflowTimer?.cancel();
@@ -431,6 +456,17 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           _showViewerError(
             'Could not keep your place. Retry to restore the last checkpoint.',
           );
+        },
+      );
+      webView.addJavaScriptHandler(
+        handlerName: 'ereaderActivity',
+        callback: (_) {
+          if (mounted &&
+              generation == _viewerGeneration &&
+              !_rendererFailed &&
+              !_isClosing) {
+            _readingActivity.interact();
+          }
         },
       );
       final installed = await webView.evaluateJavascript(
@@ -483,9 +519,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Future<void> _seekToProgress(double value) async {
+    if (!_canSeek) return;
     final generation = _viewerGeneration;
     _isSliderDragging = false;
     _isSeeking = true;
+    _syncReadingActivity();
     _pendingSeekLocation = null;
     _previewProgress = value;
     _saveDebounceTimer?.cancel();
@@ -557,6 +595,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     } finally {
       if (mounted && generation == _viewerGeneration) {
         _isSeeking = false;
+        _syncReadingActivity();
         _previewProgress = null;
         _pendingSeekLocation = null;
         _publishProgress();
@@ -599,6 +638,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _loadError = message;
       _rendererFailed = true;
     });
+    _syncReadingActivity();
     _publishProgress();
   }
 
@@ -627,6 +667,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _cachedEpubViewer = const SizedBox.expand();
       _isEpubLoading = true;
     });
+    _syncReadingActivity();
     _saveDebounceTimer?.cancel();
     // The dead renderer cannot be sampled. Persist only the confirmed snapshot.
     await _saveProgressNow();
@@ -652,6 +693,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     // Invalidate old native callbacks before any asynchronous write.
     _viewerGeneration++;
     _rendererFailed = true;
+    _syncReadingActivity();
     await _saveProgressNow();
     if (!mounted || _isClosing) return;
     setState(() {
@@ -661,6 +703,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _locationsReady = false;
       _isPreparingLocationBridge = false;
       _isSeeking = false;
+      _isSliderDragging = false;
+      _isChapterLoading = false;
       _isReflowing = false;
       _typographyChangePending = false;
       _usesDirectLocationEvents = false;
@@ -674,20 +718,16 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _loadSavedSettings();
       _loadBookData();
     });
+    _syncReadingActivity();
     _startOpeningTimer();
     _publishProgress();
   }
 
   Future<void> _changeFontSize(int size, StateSetter setModalState) async {
-    if (_typographyChangePending ||
-        _isReflowing ||
-        _isSeeking ||
-        _isEpubLoading ||
-        _rendererFailed) {
-      return;
-    }
+    if (_navigationBlocked || _isSliderDragging) return;
     final generation = _viewerGeneration;
     _typographyChangePending = true;
+    _syncReadingActivity();
     // Update the sheet synchronously: it may close before native reflow finishes.
     final previousSize = _fontSize;
     setModalState(() => _fontSize = size);
@@ -696,6 +736,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     await _captureAndSave();
     if (!mounted || generation != _viewerGeneration) return;
     _isReflowing = true;
+    _syncReadingActivity();
     _publishProgress();
     try {
       final result = await _epubController?.webViewController
@@ -723,6 +764,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       if (mounted && generation == _viewerGeneration) {
         _typographyChangePending = false;
         _isReflowing = false;
+        _syncReadingActivity();
         _publishProgress();
         unawaited(_captureAndSave());
       }
@@ -734,6 +776,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _touchMoved = true;
       return;
     }
+    _readingActivity.interact();
     _touchPointer = event.pointer;
     _touchStart = event.localPosition;
     _touchStartTime = DateTime.now();
@@ -741,6 +784,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    _readingActivity.interact();
     if (event.pointer == _touchPointer &&
         _touchStart != null &&
         (event.localPosition - _touchStart!).distance > 10) {
@@ -787,6 +831,14 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       );
     }
 
+    return ReaderActivityScope(
+      bookId: widget.bookId,
+      controller: _readingActivity,
+      child: _buildLoadedReader(context),
+    );
+  }
+
+  Widget _buildLoadedReader(BuildContext context) {
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (bool didPop, Object? result) {
@@ -838,6 +890,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           ],
         ),
         drawer: _buildChapterDrawer(context),
+        onDrawerChanged: (opened) {
+          _drawerOpen = opened;
+          _syncReadingActivity();
+        },
       ),
     );
   }
@@ -962,6 +1018,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           _openingStalled = false;
           _loadError = null;
         });
+        _syncReadingActivity();
         if (_isReflowing) _startReflowTimer(generation);
         _publishProgress();
         if (_locationsReady) unawaited(_refreshLocation());
@@ -978,7 +1035,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             _usesDirectLocationEvents ||
             _isEpubLoading ||
             _isPreparingLocationBridge ||
-            _isSeeking) {
+            _isSeeking ||
+            _isChapterLoading) {
           return;
         }
         _recordLocation(location);
@@ -1078,6 +1136,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                         ),
                       ),
                       child: Slider(
+                        // Replace cached render/semantics state when availability
+                        // changes beneath the closing drawer or settings sheet.
+                        key: ValueKey(view.canSeek),
                         value: progress.clamp(0.0, 1.0),
                         semanticFormatterCallback: (value) =>
                             '${(value * 100).toStringAsFixed(1)} percent',
@@ -1085,7 +1146,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                         inactiveColor: Colors.white30,
                         onChangeStart: view.canSeek
                             ? (value) {
+                                if (!_canSeek) return;
                                 _isSliderDragging = true;
+                                _syncReadingActivity();
                                 _previewProgress = value;
                                 _saveDebounceTimer?.cancel();
                                 _publishProgress();
@@ -1093,6 +1156,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                             : null,
                         onChanged: view.canSeek
                             ? (value) {
+                                if (!_canSeek) return;
                                 _previewProgress = value;
                                 _publishProgress();
                               }
@@ -1160,7 +1224,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                     leading: const Icon(Icons.bookmark_border),
                     onTap: () {
                       Navigator.pop(context);
-                      _epubController?.display(cfi: chapter.href);
+                      unawaited(_displayChapter(chapter.href));
                     },
                   );
                 },
@@ -1170,6 +1234,80 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         ),
       ),
     );
+  }
+
+  void _syncReadingActivity() {
+    _readingActivity.setBlocked(
+      _drawerOpen ||
+          _isSliderDragging ||
+          _isSeeking ||
+          _isChapterLoading ||
+          _isReflowing ||
+          _typographyChangePending,
+    );
+    _readingActivity.setLoaded(
+      _bookDataLoaded &&
+          !_isEpubLoading &&
+          !_isPreparingLocationBridge &&
+          !_rendererFailed &&
+          _loadError == null &&
+          !_isClosing,
+    );
+  }
+
+  Future<void> _displayChapter(String href) async {
+    if (_navigationBlocked || _isSliderDragging) return;
+    final generation = _viewerGeneration;
+    _isChapterLoading = true;
+    _syncReadingActivity();
+    _publishProgress();
+    try {
+      final result = await _epubController?.webViewController
+          ?.callAsyncJavaScript(
+            functionBody: """
+              await rendition.display(href);
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              var position = window._ereaderSnapshot ? window._ereaderSnapshot() : null;
+              if (!position) throw new Error('Chapter passage is not ready');
+              return position;
+            """,
+            arguments: {'href': href},
+          )
+          .timeout(const Duration(seconds: 10));
+      if (!mounted || generation != _viewerGeneration || _rendererFailed) {
+        return;
+      }
+      if (result?.error != null || result?.value is! Map) {
+        throw StateError('Could not confirm the chapter passage');
+      }
+      final data = Map<String, dynamic>.from(result!.value as Map);
+      final position = EpubLocation.fromJson(data);
+      final sequence = data['sequence'];
+      if (!position.startCfi.startsWith('epubcfi(') ||
+          !position.progress.isFinite ||
+          sequence is! int) {
+        throw StateError('Invalid chapter passage');
+      }
+      if (sequence <= _lastLocationSequence) {
+        throw StateError('Outdated chapter passage');
+      }
+      _lastLocationSequence = sequence;
+      _isChapterLoading = false;
+      _recordLocation(position, offset: data['offset'], layout: data['layout']);
+    } catch (error) {
+      debugPrint('Chapter navigation failed: $error');
+      if (mounted && generation == _viewerGeneration && !_isClosing) {
+        _showViewerError(
+          'Could not open that chapter. Retry to restore your last checkpoint.',
+        );
+      }
+    } finally {
+      if (mounted && generation == _viewerGeneration && !_isClosing) {
+        _isChapterLoading = false;
+        _syncReadingActivity();
+        _publishProgress();
+      }
+    }
   }
 
   void _showTextSettings(BuildContext context) {

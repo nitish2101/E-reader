@@ -6,6 +6,7 @@ import 'package:pdfrx/pdfrx.dart';
 
 import '../../data/repositories/book_repository.dart';
 import 'bloc/reader_bloc.dart';
+import '../statistics/reader_activity_scope.dart';
 
 class PdfReaderScreen extends StatefulWidget {
   final String bookId;
@@ -18,6 +19,7 @@ class PdfReaderScreen extends StatefulWidget {
 
 class _PdfReaderScreenState extends State<PdfReaderScreen>
     with WidgetsBindingObserver {
+  final _readingActivity = ReaderActivityController();
   late final ReaderBloc _readerBloc;
   PdfViewerController? _controller;
   Timer? _autoSaveTimer;
@@ -59,6 +61,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
     _autoSaveTimer?.cancel();
+    _readingActivity.dispose();
     super.dispose();
   }
 
@@ -85,6 +88,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   Future<void> _closeReader() async {
     if (_closing) return;
     _closing = true;
+    _readingActivity.setLoaded(false);
     _autoSaveTimer?.cancel();
     await _checkpoint();
     if (!mounted) return;
@@ -101,6 +105,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Future<void> _retryViewer() async {
+    _readingActivity.setLoaded(false);
+    _readingActivity.setBlocked(false);
+    _readingActivity.cancelNavigation();
     await _checkpoint();
     if (!mounted) return;
     setState(() {
@@ -138,6 +145,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   @override
   Widget build(BuildContext context) {
+    return ReaderActivityScope(
+      bookId: widget.bookId,
+      controller: _readingActivity,
+      child: _buildReader(context),
+    );
+  }
+
+  Widget _buildReader(BuildContext context) {
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (didPop, result) {
@@ -263,15 +278,21 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             await controller.goToPage(pageNumber: initialPage);
           }
 
-          if (!mounted || generation != _viewerGeneration) return;
+          if (!mounted || generation != _viewerGeneration || _closing) return;
           _openingTimer?.cancel();
           _openingStalled = false;
           _currentPage =
               controller.pageNumber ?? initialPage.clamp(1, _totalPages);
           _isInitializing = false;
+          _readingActivity.setLoaded(true);
           _readerBloc.confirmPdfPosition(_currentPage, _totalPages);
 
           if (mounted) setState(() {});
+        },
+        onDocumentChanged: (document) {
+          if (mounted && generation == _viewerGeneration && document == null) {
+            _readingActivity.setLoaded(false);
+          }
         },
         onPageChanged: (pageNumber) {
           if (_isInitializing || !mounted || generation != _viewerGeneration) {
@@ -380,6 +401,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Widget _buildBottomBar(BuildContext context) {
+    final generation = _viewerGeneration;
     final progress = _totalPages > 0 ? _currentPage / _totalPages : 0.0;
 
     return Positioned(
@@ -413,8 +435,22 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                           value: _currentPage.toDouble(),
                           min: 1,
                           max: _totalPages.toDouble(),
+                          onChangeStart: (_) {
+                            if (generation == _viewerGeneration &&
+                                !_isInitializing) {
+                              _readingActivity.setBlocked(true);
+                            }
+                          },
                           onChanged: (value) {
-                            _controller?.goToPage(pageNumber: value.toInt());
+                            if (generation == _viewerGeneration &&
+                                !_isInitializing) {
+                              unawaited(_seekPage(value.toInt()));
+                            }
+                          },
+                          onChangeEnd: (_) {
+                            if (generation == _viewerGeneration) {
+                              _readingActivity.setBlocked(false);
+                            }
                           },
                         ),
                       // Page indicator
@@ -443,6 +479,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _seekPage(int page) async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await _readingActivity.navigate(
+        () => controller.goToPage(pageNumber: page),
+      );
+    } on TimeoutException {
+      // pdfrx cancels superseded animation futures without completing them.
+    } catch (error) {
+      debugPrint('PDF page navigation failed: $error');
+    }
   }
 
   void _showSettings(BuildContext context) {
