@@ -1,179 +1,186 @@
 import 'package:flutter/material.dart';
 
+/// Paper & Ink: a quiet charcoal canvas with olive accents.
 class AppTheme {
-  // Color palette - Enhanced for better visual appeal
-  static const Color primaryColor = Color(0xFF6366F1);
-  static const Color secondaryColor = Color(0xFF8B5CF6);
-  static const Color accentColor = Color(0xFFF472B6);
-
-  // Light theme colors
-  static const Color surfaceLight = Color(0xFFFAFAFA);
-  static const Color cardLight = Color(0xFFFFFFFF);
-  static const Color backgroundLight = Color(0xFFF5F5F5);
-
-  // Dark theme colors - Enhanced for AMOLED and better contrast
-  static const Color surfaceDark = Color(0xFF0F0F1E);
-  static const Color cardDark = Color(0xFF1A1A2E);
-  static const Color backgroundDark = Color(0xFF0A0A14);
-  static const Color borderDark = Color(0xFF2D2D44);
-
-  // Accent colors for both themes
-  static const Color successColor = Color(0xFF10B981);
-  static const Color warningColor = Color(0xFFF59E0B);
-  static const Color errorColor = Color(0xFFEF4444);
-  static const Color infoColor = Color(0xFF3B82F6);
-
-  static ThemeData get lightTheme {
-    return ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.light,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryColor,
-        brightness: Brightness.light,
-        primary: primaryColor,
-        secondary: secondaryColor,
-        surface: surfaceLight,
-      ),
-      scaffoldBackgroundColor: surfaceLight,
-      textTheme: ThemeData.light().textTheme.apply(
-        bodyColor: Colors.grey[900],
-        displayColor: Colors.grey[900],
-      ),
-      appBarTheme: AppBarTheme(
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: surfaceLight,
-        foregroundColor: Colors.grey[900],
-        titleTextStyle: TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w600,
-          color: Colors.grey[900],
-        ),
-      ),
-      cardTheme: CardThemeData(
-        elevation: 2,
-        color: cardLight,
-        shadowColor: Colors.black.withValues(alpha: 0.05),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 4,
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        indicatorColor: primaryColor.withValues(alpha: 0.2),
-        labelTextStyle: WidgetStateProperty.all(
-          const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-        ),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: Colors.grey[100],
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-      ),
-    );
-  }
+  static const canvas = Color(0xFF1F231D);
+  static const panel = Color(0xFF282D25);
+  static const ink = Color(0xFFEEECE5);
+  static const muted = Color(0xFFB9C1B1);
+  static const accent = Color(0xFFAAB895);
+  static const outline = Color(0xFF7B8575);
+  static const divider = Color(0xFF444B3F);
+  static const placeholder = Color(0xFF343B30);
 
   static ThemeData get darkTheme {
-    return ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryColor,
-        brightness: Brightness.dark,
-        primary: primaryColor,
-        secondary: secondaryColor,
-        surface: surfaceDark,
-        error: errorColor,
-      ),
-      scaffoldBackgroundColor: backgroundDark,
-      textTheme: ThemeData.dark().textTheme.apply(
-        bodyColor: Colors.grey[100],
-        displayColor: Colors.grey[50],
-      ),
-      appBarTheme: AppBarTheme(
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: surfaceDark,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: Colors.grey[100],
-        titleTextStyle: TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w600,
-          color: Colors.grey[100],
+    final colors =
+        ColorScheme.fromSeed(
+          seedColor: accent,
+          brightness: Brightness.dark,
+          primary: accent,
+          onPrimary: canvas,
+          primaryContainer: placeholder,
+          onPrimaryContainer: ink,
+          secondary: accent,
+          onSecondary: canvas,
+          surface: canvas,
+          onSurface: ink,
+          onSurfaceVariant: muted,
+          outline: outline,
+          outlineVariant: divider,
+          error: const Color(0xFFF3B4AB),
+        ).copyWith(
+          surfaceContainerLowest: canvas,
+          surfaceContainerLow: panel,
+          surfaceContainer: panel,
+          surfaceContainerHigh: placeholder,
+          surfaceContainerHighest: placeholder,
+        );
+    final base = ThemeData(useMaterial3: true, colorScheme: colors);
+    final text = base.textTheme.apply(bodyColor: ink, displayColor: ink);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+    );
+    return base.copyWith(
+      scaffoldBackgroundColor: canvas,
+      textTheme: text.copyWith(
+        headlineLarge: const TextStyle(
+          fontFamily: 'Newsreader',
+          fontSize: 36,
+          height: 1.15,
+          color: ink,
         ),
+        headlineMedium: const TextStyle(
+          fontFamily: 'Newsreader',
+          fontSize: 32,
+          height: 1.2,
+          color: ink,
+        ),
+        titleLarge: const TextStyle(
+          fontFamily: 'Newsreader',
+          fontSize: 24,
+          height: 1.25,
+          color: ink,
+        ),
+        titleMedium: text.titleMedium?.copyWith(fontSize: 16, height: 1.4),
+        bodyLarge: text.bodyLarge?.copyWith(fontSize: 16, height: 1.5),
+        bodyMedium: text.bodyMedium?.copyWith(fontSize: 14, height: 1.45),
+        bodySmall: text.bodySmall?.copyWith(
+          fontSize: 12,
+          height: 1.4,
+          color: muted,
+        ),
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: canvas,
+        foregroundColor: ink,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: false,
       ),
       cardTheme: CardThemeData(
-        elevation: 8,
-        color: cardDark,
-        shadowColor: Colors.black.withValues(alpha: 0.3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: borderDark.withValues(alpha: 0.3), width: 1),
-        ),
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 4,
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        indicatorColor: primaryColor.withValues(alpha: 0.3),
-        backgroundColor: surfaceDark,
+        color: panel,
+        elevation: 0,
+        margin: EdgeInsets.zero,
         surfaceTintColor: Colors.transparent,
-        elevation: 8,
-        shadowColor: Colors.black.withValues(alpha: 0.5),
-        labelTextStyle: WidgetStateProperty.all(
-          const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        shape: shape,
+      ),
+      dividerTheme: const DividerThemeData(color: divider, thickness: 1),
+      iconTheme: const IconThemeData(color: muted, size: 24),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.all(12),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          foregroundColor: ink,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          side: const BorderSide(color: outline),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: cardDark,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: borderDark.withValues(alpha: 0.5)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: borderDark.withValues(alpha: 0.3)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: primaryColor, width: 2),
-        ),
+        fillColor: panel,
+        hintStyle: const TextStyle(color: muted),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
-          vertical: 14,
+          vertical: 16,
+        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: outline),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: accent, width: 2),
         ),
       ),
-      dividerTheme: DividerThemeData(
-        color: borderDark.withValues(alpha: 0.5),
-        thickness: 1,
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: canvas,
+        selectedColor: accent,
+        labelStyle: const TextStyle(color: ink, fontSize: 14),
+        checkmarkColor: canvas,
+        side: const BorderSide(color: outline),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
-      switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return primaryColor;
-          }
-          return Colors.grey[600];
-        }),
-        trackColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return primaryColor.withValues(alpha: 0.5);
-          }
-          return Colors.grey[800];
-        }),
+      navigationRailTheme: const NavigationRailThemeData(
+        backgroundColor: canvas,
+        indicatorColor: placeholder,
+        selectedIconTheme: IconThemeData(color: accent),
+        unselectedIconTheme: IconThemeData(color: muted),
+        selectedLabelTextStyle: TextStyle(color: ink, fontSize: 12),
+        unselectedLabelTextStyle: TextStyle(color: muted, fontSize: 12),
+      ),
+      navigationBarTheme: const NavigationBarThemeData(
+        backgroundColor: canvas,
+        indicatorColor: placeholder,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: panel,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: true,
+        constraints: BoxConstraints(maxWidth: 640),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: panel,
+        surfaceTintColor: Colors.transparent,
+        shape: shape,
+      ),
+      sliderTheme: base.sliderTheme.copyWith(
+        activeTrackColor: accent,
+        inactiveTrackColor: divider,
+        thumbColor: accent,
+        trackHeight: 4,
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: accent,
+        linearTrackColor: divider,
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: placeholder,
+        contentTextStyle: TextStyle(color: ink, fontSize: 14),
+        actionTextColor: accent,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

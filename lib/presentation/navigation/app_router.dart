@@ -14,24 +14,35 @@ class AppRouter {
     initialLocation: '/',
     observers: [readingRouteObserver],
     routes: [
-      // Home with bottom navigation
-      ShellRoute(
-        builder: (context, state, child) => HomeScreen(child: child),
-        routes: [
-          GoRoute(
-            path: '/',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: LibraryScreen()),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, shell) => HomeScreen(navigationShell: shell),
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: LibraryScreen()),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/store',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: StoreScreen()),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/store',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: StoreScreen()),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/settings',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: SettingsScreen()),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/settings',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: SettingsScreen()),
+              ),
+            ],
           ),
         ],
       ),

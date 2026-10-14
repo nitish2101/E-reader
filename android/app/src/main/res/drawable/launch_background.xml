@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white"/>
-    <!-- You can add your app logo here if you have one -->
+    <item android:drawable="@color/paper_ink_canvas"/>
 </layer-list>

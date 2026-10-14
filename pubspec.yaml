@@ -65,3 +65,9 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/fonts/newsreader/OFL.txt
+  fonts:
+    - family: Newsreader
+      fonts:
+        - asset: assets/fonts/newsreader/Newsreader.ttf

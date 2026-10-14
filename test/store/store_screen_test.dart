@@ -128,7 +128,7 @@ void main() {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
       await mount(tester);
-      expect(find.text('Book Store'), findsOneWidget);
+      expect(find.text('Store'), findsOneWidget);
       expect(find.text('Pride and Prejudice'), findsWidgets);
       expect(find.text('PDF'), findsWidgets);
       expect(find.text('EPUB'), findsWidgets);

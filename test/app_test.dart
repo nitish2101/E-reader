@@ -27,7 +27,7 @@ void main() {
     try {
       await tester.pumpWidget(const EReaderApp());
       await tester.pumpAndSettle();
-      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.byType(NavigationRail), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.runAsync(() async {
         await tester.tap(find.text('Store'));
@@ -98,7 +98,7 @@ void main() {
     try {
       await tester.pumpWidget(const EReaderApp());
       await tester.pumpAndSettle();
-      expect(find.text('My Library'), findsOneWidget);
+      expect(find.text('Library'), findsWidgets);
       await tester.tap(find.text('Stats'));
       await tester.pumpAndSettle();
       expect(find.textContaining('storage is unavailable'), findsOneWidget);

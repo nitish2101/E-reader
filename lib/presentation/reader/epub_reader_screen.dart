@@ -10,6 +10,7 @@ import '../../data/repositories/book_repository.dart';
 import 'epub_location_bridge.dart';
 import '../statistics/reader_activity_scope.dart';
 import 'widgets/dictionary_dialog.dart';
+import 'widgets/epub_reader_controls.dart';
 
 typedef _ProgressView = ({double progress, bool canSeek, bool animate});
 
@@ -97,7 +98,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   // Settings
   int _fontSize = 18;
-  String _currentThemeName = 'Light';
+  String _currentThemeName = 'Dark';
 
   late BookRepository _bookRepository;
 
@@ -173,7 +174,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   void _loadSavedSettings() {
     final settingsBox = Hive.box('settings');
-    _currentThemeName = settingsBox.get('readerTheme', defaultValue: 'Light');
+    _currentThemeName = settingsBox.get('readerTheme', defaultValue: 'Dark');
     _fontSize = settingsBox.get('readerFontSize', defaultValue: 18);
   }
 
@@ -902,29 +903,21 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   // Theme helpers
   // ---------------------------------------------------------------------------
 
-  Color _getBackgroundColor() {
-    switch (_currentThemeName) {
-      case 'Dark':
-        return const Color(0xFF121212);
-      case 'Sepia':
-        return const Color(0xFFF4ECD8);
-      default:
-        return Colors.white;
-    }
-  }
+  Color _getBackgroundColor() =>
+      readerControlTheme(_currentThemeName).colorScheme.surface;
 
   EpubTheme _getTheme() {
     final background = _getBackgroundColor();
-    final textColor = _currentThemeName == 'Dark'
-        ? '#e0e0e0'
-        : (_currentThemeName == 'Sepia' ? '#5d4037' : '#000000');
+    final foreground = readerControlTheme(
+      _currentThemeName,
+    ).colorScheme.onSurface;
+    final textColor =
+        '#${foreground.toARGB32().toRadixString(16).substring(2)}';
     final backgroundCss =
         '#${background.toARGB32().toRadixString(16).substring(2)}';
     return EpubTheme.custom(
       backgroundDecoration: BoxDecoration(color: background),
-      foregroundColor: _currentThemeName == 'Dark'
-          ? Colors.white
-          : (_currentThemeName == 'Sepia' ? Colors.brown : Colors.black),
+      foregroundColor: foreground,
       // Register styles with the rendition's content hook before it measures
       // each chapter, including chapters loaded later during continuous scroll.
       customCss: {
@@ -990,7 +983,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
               showModalBottomSheet(
                 context: context,
                 isScrollControlled: true,
-                backgroundColor: Colors.transparent, // For glassmorphism
+                backgroundColor: Colors.transparent,
                 builder: (context) => DictionaryDialog(word: text.trim()),
               );
             }
@@ -1047,194 +1040,103 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     );
   }
 
-  Widget _buildTopBar(BuildContext context, String title) {
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.black87, Colors.transparent],
-          ),
-        ),
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: _closeReader,
-                ),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Builder(
-                  builder: (ctx) => IconButton(
-                    icon: const Icon(Icons.list, color: Colors.white),
-                    onPressed: () => Scaffold.of(ctx).openDrawer(),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.text_format, color: Colors.white),
-                  onPressed: () => _showTextSettings(context),
-                ),
-              ],
-            ),
-          ),
+  Widget _buildTopBar(BuildContext context, String title) => Positioned(
+    top: 0,
+    left: 0,
+    right: 0,
+    child: Theme(
+      data: readerControlTheme(_currentThemeName),
+      child: Builder(
+        builder: (context) => EpubTopControls(
+          title: title,
+          onBack: _closeReader,
+          onChapters: () => Scaffold.of(context).openDrawer(),
+          onTextSettings: () => _showTextSettings(context),
         ),
       ),
-    );
-  }
+    ),
+  );
 
-  Widget _buildBottomBar(BuildContext context) {
-    return Positioned(
-      bottom: 0,
-      left: 0,
-      right: 0,
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Colors.black87, Colors.transparent],
+  Widget _buildBottomBar(BuildContext context) => Positioned(
+    bottom: 0,
+    left: 0,
+    right: 0,
+    child: Theme(
+      data: readerControlTheme(_currentThemeName),
+      child: ValueListenableBuilder<_ProgressView>(
+        valueListenable: _progressView,
+        builder: (context, view, _) => TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: view.progress),
+          duration: view.animate && !MediaQuery.disableAnimationsOf(context)
+              ? const Duration(milliseconds: 120)
+              : Duration.zero,
+          curve: Curves.easeOut,
+          builder: (context, progress, _) => EpubProgressControls(
+            progress: progress,
+            isSeeking: _isSeeking,
+            onChangeStart: view.canSeek
+                ? (value) {
+                    if (!_canSeek) return;
+                    _isSliderDragging = true;
+                    _syncReadingActivity();
+                    _previewProgress = value;
+                    _saveDebounceTimer?.cancel();
+                    _publishProgress();
+                  }
+                : null,
+            onChanged: view.canSeek
+                ? (value) {
+                    if (!_canSeek) return;
+                    _previewProgress = value;
+                    _publishProgress();
+                  }
+                : null,
+            onChangeEnd: view.canSeek ? _seekToProgress : null,
           ),
         ),
+      ),
+    ),
+  );
+
+  Widget _buildChapterDrawer(BuildContext context) => Theme(
+    data: readerControlTheme(_currentThemeName),
+    child: Builder(
+      builder: (context) => Drawer(
+        backgroundColor: _getBackgroundColor(),
         child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: ValueListenableBuilder<_ProgressView>(
-              valueListenable: _progressView,
-              builder: (context, view, _) => TweenAnimationBuilder<double>(
-                tween: Tween<double>(end: view.progress),
-                duration: view.animate
-                    ? const Duration(milliseconds: 120)
-                    : Duration.zero,
-                curve: Curves.easeOut,
-                builder: (context, progress, _) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 4,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 8,
-                        ),
-                      ),
-                      child: Slider(
-                        // Replace cached render/semantics state when availability
-                        // changes beneath the closing drawer or settings sheet.
-                        key: ValueKey(view.canSeek),
-                        value: progress.clamp(0.0, 1.0),
-                        semanticFormatterCallback: (value) =>
-                            '${(value * 100).toStringAsFixed(1)} percent',
-                        activeColor: Colors.white,
-                        inactiveColor: Colors.white30,
-                        onChangeStart: view.canSeek
-                            ? (value) {
-                                if (!_canSeek) return;
-                                _isSliderDragging = true;
-                                _syncReadingActivity();
-                                _previewProgress = value;
-                                _saveDebounceTimer?.cancel();
-                                _publishProgress();
-                              }
-                            : null,
-                        onChanged: view.canSeek
-                            ? (value) {
-                                if (!_canSeek) return;
-                                _previewProgress = value;
-                                _publishProgress();
-                              }
-                            : null,
-                        onChangeEnd: view.canSeek ? _seekToProgress : null,
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (_isSeeking)
-                          const Padding(
-                            padding: EdgeInsets.only(right: 8),
-                            child: SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        Text(
-                          '${(progress * 100).toStringAsFixed(1)}%',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Chapters',
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
-            ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _chapters.length,
+                  itemBuilder: (context, index) {
+                    final chapter = _chapters[index];
+                    return ListTile(
+                      title: Text(chapter.title),
+                      leading: const Icon(Icons.bookmark_border),
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(_displayChapter(chapter.href));
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildChapterDrawer(BuildContext context) {
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Chapters',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-              ),
-            ),
-            const Divider(),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _chapters.length,
-                itemBuilder: (context, index) {
-                  final chapter = _chapters[index];
-                  return ListTile(
-                    title: Text(chapter.title),
-                    leading: const Icon(Icons.bookmark_border),
-                    onTap: () {
-                      Navigator.pop(context);
-                      unawaited(_displayChapter(chapter.href));
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+    ),
+  );
 
   void _syncReadingActivity() {
     _readingActivity.setBlocked(
@@ -1311,87 +1213,96 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   void _showTextSettings(BuildContext context) {
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      builder: (bottomSheetContext) => StatefulBuilder(
-        builder: (context, setModalState) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Reading Settings',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 24),
-                Row(
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 480),
+      backgroundColor: _getBackgroundColor(),
+      builder: (bottomSheetContext) => Theme(
+        data: readerControlTheme(_currentThemeName),
+        child: StatefulBuilder(
+          builder: (context, setModalState) => ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+            ),
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.format_size),
-                    const SizedBox(width: 8),
-                    const Text('Font Size'),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: _fontSize > 12
-                          ? () {
-                              unawaited(
-                                _changeFontSize(_fontSize - 2, setModalState),
-                              );
-                            }
-                          : null,
-                    ),
                     Text(
-                      '$_fontSize',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      'Reading Settings',
+                      style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      onPressed: _fontSize < 32
-                          ? () {
-                              unawaited(
-                                _changeFontSize(_fontSize + 2, setModalState),
-                              );
-                            }
-                          : null,
+                    const SizedBox(height: 24),
+                    const Text('Font Size'),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Decrease text size',
+                          icon: const Icon(Icons.remove_circle_outline),
+                          onPressed: _fontSize > 12
+                              ? () => unawaited(
+                                  _changeFontSize(_fontSize - 2, setModalState),
+                                )
+                              : null,
+                        ),
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              '$_fontSize',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Increase text size',
+                          icon: const Icon(Icons.add_circle_outline),
+                          onPressed: _fontSize < 32
+                              ? () => unawaited(
+                                  _changeFontSize(_fontSize + 2, setModalState),
+                                )
+                              : null,
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 24),
+                    const Text('Reading color'),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        _buildThemeButton(
+                          context,
+                          setModalState,
+                          'Light',
+                          const Color(0xFFF8F5EE),
+                          const Color(0xFF232720),
+                        ),
+                        _buildThemeButton(
+                          context,
+                          setModalState,
+                          'Sepia',
+                          const Color(0xFFF4ECD8),
+                          const Color(0xFF5D4037),
+                        ),
+                        _buildThemeButton(
+                          context,
+                          setModalState,
+                          'Dark',
+                          const Color(0xFF1F231D),
+                          const Color(0xFFEEECE5),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
                   ],
                 ),
-                const SizedBox(height: 16),
-                const Text('Theme'),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildThemeButton(
-                      context,
-                      setModalState,
-                      'Light',
-                      Colors.white,
-                      Colors.black,
-                    ),
-                    _buildThemeButton(
-                      context,
-                      setModalState,
-                      'Sepia',
-                      const Color(0xFFF4ECD8),
-                      Colors.brown,
-                    ),
-                    _buildThemeButton(
-                      context,
-                      setModalState,
-                      'Dark',
-                      const Color(0xFF121212),
-                      Colors.white,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
+              ),
             ),
           ),
         ),
@@ -1406,35 +1317,54 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     Color bgColor,
     Color textColor,
   ) {
-    final isSelected = _currentThemeName == name;
-    return GestureDetector(
-      onTap: () async {
-        setModalState(() => _currentThemeName = name);
-        setState(() {});
-        _saveSettings();
-        _epubController?.updateTheme(theme: _getTheme());
-        Navigator.pop(context);
-      },
-      child: Container(
-        width: 70,
-        height: 70,
-        decoration: BoxDecoration(
+    final selected = _currentThemeName == name;
+    void select() {
+      setModalState(() => _currentThemeName = name);
+      setState(() {});
+      _saveSettings();
+      _epubController?.updateTheme(theme: _getTheme());
+      Navigator.pop(context);
+    }
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$name reading color',
+      onTap: select,
+      child: ExcludeSemantics(
+        child: Material(
           color: bgColor,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected
-                ? Theme.of(context).colorScheme.primary
-                : Colors.grey.shade400,
-            width: isSelected ? 3 : 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: selected
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.outline,
+              width: selected ? 2 : 1,
+            ),
           ),
-        ),
-        child: Center(
-          child: Text(
-            'Aa',
-            style: TextStyle(
-              color: textColor,
-              fontSize: 22,
-              fontWeight: FontWeight.w500,
+          child: InkWell(
+            onTap: select,
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 104,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Aa',
+                      style: TextStyle(color: textColor, fontSize: 22),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      name,
+                      style: TextStyle(color: textColor, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),

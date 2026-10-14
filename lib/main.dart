@@ -3,7 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme/app_theme.dart';
-import 'core/theme/theme_cubit.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'core/services/cache_config.dart';
 import 'data/models/book_model.dart';
 import 'data/statistics/reading_statistics_repository.dart';
@@ -16,6 +17,12 @@ import 'presentation/navigation/app_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  LicenseRegistry.addLicense(() async* {
+    yield LicenseEntryWithLineBreaks([
+      'Newsreader',
+    ], await rootBundle.loadString('assets/fonts/newsreader/OFL.txt'));
+  });
 
   // Initialize Hive
   await Hive.initFlutter();
@@ -88,23 +95,14 @@ class _EReaderAppState extends State<EReaderApp> {
                 LibraryBloc(bookRepository: context.read<BookRepository>())
                   ..add(LoadLibrary()),
           ),
-          BlocProvider<ThemeCubit>(
-            create: (context) => ThemeCubit(
-              settingsRepository: context.read<SettingsRepository>(),
-            ),
-          ),
         ],
-        child: BlocBuilder<ThemeCubit, ThemeState>(
-          builder: (context, themeState) {
-            return MaterialApp.router(
-              title: 'E-Reader',
-              debugShowCheckedModeBanner: false,
-              theme: AppTheme.lightTheme,
-              darkTheme: AppTheme.darkTheme,
-              themeMode: themeState.themeMode,
-              routerConfig: AppRouter.router,
-            );
-          },
+        child: MaterialApp.router(
+          title: 'E-Reader',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.darkTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: ThemeMode.dark,
+          routerConfig: AppRouter.router,
         ),
       ),
     );

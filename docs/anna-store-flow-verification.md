@@ -63,4 +63,27 @@ the app takes over when the source makes the download available.
 
 Session registrations last for the current repository lifetime. An app restart
 may require opening verification again even when the native browser retains
-cookies. Download continuation after leaving Store is outside this change.
+cookies.
+
+## Integration with the tablet redesign
+
+On 2026-10-14, combined the Store fixes in `ffa4408` with tablet redesign
+`3d04522` on local `main`. The overlapping Store screen keeps the redesigned
+cards, filters, scroll handling, retained tabs, and deferred notices. Get uses
+the app downloader for Anna books; only a blocked transfer requests verification.
+Queued verification opens when Store is active, so a background download cannot
+interrupt another tab. A verified resume retains its download metadata and the
+existing limit on reopening verification.
+
+Reviewed the Store callbacks, active-tab visibility, browser-result handling,
+download metadata/progress/cancellation, library refresh subscription, filters,
+pagination, EPUB controls, and saved-position boundaries. The redesign does not
+change the Store repositories, download services, BLoC, or library persistence.
+
+Combined-code checks: 143 existing Flutter tests passed, three opt-in live tests
+skipped, all three existing JavaScript reader bridge checks passed, and static
+analysis found no issues. The combined Android release APK built successfully.
+No new tests or dependencies were added for this merge.
+The native evidence above belongs to the earlier Store build; the combined UI
+was reviewed in source and checked with the existing tests, without repeating
+the native/live provider journeys.

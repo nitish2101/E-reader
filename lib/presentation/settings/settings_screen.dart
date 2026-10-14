@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../core/theme/theme_cubit.dart';
+import '../../core/theme/paper_ink_layout.dart';
+import '../shared/page_header.dart';
 import '../../data/repositories/settings_repository.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/repositories/store_repository.dart';
@@ -10,46 +11,80 @@ class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
-        children: [
-          // Theme Section
-          const _SectionHeader(
-            icon: Icons.palette_outlined,
-            title: 'Appearance',
-          ),
-          _ThemeSettingTile(),
-          const Divider(indent: 16, endIndent: 16),
-
-          // Store Settings Section
-          const _SectionHeader(
-            icon: Icons.store_outlined,
-            title: 'Store & Search',
-          ),
-          _SearchSourcesTile(),
-          _PreferredFormatTile(),
-          const Divider(indent: 16, endIndent: 16),
-
-          // Reader Settings Section
-          const _SectionHeader(
-            icon: Icons.auto_stories_outlined,
-            title: 'Reading',
-          ),
-          _AutoSaveProgressTile(),
-          const Divider(indent: 16, endIndent: 16),
-
-          // About Section
-          const _SectionHeader(icon: Icons.info_outline, title: 'About'),
-          _AboutTile(),
-          _ClearCacheTile(),
-
-          const SizedBox(height: 32),
-        ],
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      bottom: false,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final layout = PaperInkLayout.forWidth(
+            constraints.maxWidth,
+            textScale: MediaQuery.textScalerOf(context).scale(16) / 16,
+          );
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: ListView(
+                key: const PageStorageKey('settings-scroll'),
+                padding: EdgeInsets.fromLTRB(
+                  layout.gutter,
+                  24,
+                  layout.gutter,
+                  32,
+                ),
+                children: [
+                  const PageHeader(title: 'Settings'),
+                  const SizedBox(height: 24),
+                  const _SectionHeader(
+                    icon: Icons.palette_outlined,
+                    title: 'Appearance',
+                  ),
+                  const Card(
+                    child: ListTile(
+                      leading: Icon(Icons.dark_mode_outlined),
+                      title: Text('Paper & Ink'),
+                      subtitle: Text('Warm charcoal · muted olive'),
+                    ),
+                  ),
+                  const _SectionHeader(
+                    icon: Icons.store_outlined,
+                    title: 'Store & Search',
+                  ),
+                  Card(
+                    child: Column(
+                      children: [
+                        _SearchSourcesTile(),
+                        const Divider(height: 1),
+                        _PreferredFormatTile(),
+                      ],
+                    ),
+                  ),
+                  const _SectionHeader(
+                    icon: Icons.auto_stories_outlined,
+                    title: 'Reading',
+                  ),
+                  Card(child: _AutoSaveProgressTile()),
+                  const _SectionHeader(
+                    icon: Icons.info_outline,
+                    title: 'About',
+                  ),
+                  Card(
+                    child: Column(
+                      children: [
+                        _AboutTile(),
+                        const Divider(height: 1),
+                        _ClearCacheTile(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _SectionHeader extends StatelessWidget {
@@ -61,7 +96,7 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+      padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
       child: Row(
         children: [
           Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
@@ -76,66 +111,6 @@ class _SectionHeader extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-class _ThemeSettingTile extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return BlocBuilder<ThemeCubit, ThemeState>(
-      builder: (context, state) {
-        return ListTile(
-          leading: Icon(
-            _getThemeIcon(state.themeMode),
-            color: Theme.of(context).colorScheme.secondary,
-          ),
-          title: const Text('Theme Mode'),
-          subtitle: Text(_getThemeLabel(state.themeMode)),
-          trailing: SegmentedButton<ThemeMode>(
-            segments: const [
-              ButtonSegment(
-                value: ThemeMode.light,
-                icon: Icon(Icons.light_mode, size: 16),
-              ),
-              ButtonSegment(
-                value: ThemeMode.system,
-                icon: Icon(Icons.brightness_auto, size: 16),
-              ),
-              ButtonSegment(
-                value: ThemeMode.dark,
-                icon: Icon(Icons.dark_mode, size: 16),
-              ),
-            ],
-            selected: {state.themeMode},
-            onSelectionChanged: (Set<ThemeMode> selected) {
-              context.read<ThemeCubit>().setThemeMode(selected.first);
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  IconData _getThemeIcon(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.light:
-        return Icons.light_mode;
-      case ThemeMode.dark:
-        return Icons.dark_mode;
-      case ThemeMode.system:
-        return Icons.brightness_auto;
-    }
-  }
-
-  String _getThemeLabel(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.light:
-        return 'Light mode active';
-      case ThemeMode.dark:
-        return 'Dark mode active';
-      case ThemeMode.system:
-        return 'Follows system settings';
-    }
   }
 }
 
@@ -197,22 +172,31 @@ class _PreferredFormatTile extends StatelessWidget {
       builder: (context, box, _) {
         final format = settingsRepo.getDownloadFormat();
 
-        return ListTile(
-          leading: Icon(
-            Icons.file_download_outlined,
-            color: Theme.of(context).colorScheme.tertiary,
-          ),
-          title: const Text('Preferred Format'),
-          subtitle: Text('Default: ${format.toUpperCase()}'),
-          trailing: SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'pdf', label: Text('PDF')),
-              ButtonSegment(value: 'epub', label: Text('EPUB')),
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Preferred Format',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Default: ${format.toUpperCase()}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'pdf', label: Text('PDF')),
+                  ButtonSegment(value: 'epub', label: Text('EPUB')),
+                ],
+                selected: {format},
+                onSelectionChanged: (selected) =>
+                    settingsRepo.setDownloadFormat(selected.first),
+              ),
             ],
-            selected: {format},
-            onSelectionChanged: (Set<String> selected) {
-              settingsRepo.setDownloadFormat(selected.first);
-            },
           ),
         );
       },
@@ -293,7 +277,7 @@ class _AboutTile extends StatelessWidget {
               '• PDF & EPUB reader\n'
               '• Multiple book sources\n'
               '• Reading progress tracking\n'
-              '• Dark & Light themes\n'
+              '• Paper & Ink dark appearance\n'
               '• Offline library management',
             ),
           ],
