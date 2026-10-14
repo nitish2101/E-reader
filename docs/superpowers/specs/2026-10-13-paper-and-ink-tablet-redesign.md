@@ -14,6 +14,14 @@
 
 Implement the calm editorial typography, warm charcoal/paper surfaces, olive/sage accents, fine rules, generous gutters, Library shelf, horizontal Store catalogue and immersive reader. Mockup board labels, device borders and illustrative book art are not application assets. Keep real imported/downloaded covers. The mockup's adjacent reader settings panel represents an open sheet, not a permanently visible sidebar.
 
+## Execution amendment — 2026-10-14
+
+The user authorized implementation and removed the light app theme from scope. Build the dark-only app; remove app appearance switching controls while leaving persisted legacy theme keys untouched. EPUB retains existing reading-color choices and defaults to Dark for a new reader preference. The existing light app mockup is historical context, not an implementation deliverable.
+
+Before implementation, fetched and merged latest origin/main c35ad42 into this branch (merge 4ba67b5). Preserve its real reading-statistics feature, Stats entry point, ReaderActivityScope, root readingRouteObserver, checkpoint/retry/resize recovery, and vendored reader-engine overrides. No changes to statistics storage, time accounting, checkpoint semantics or third_party engines. Statistics receives the shared dark theme, with focused layout fixes only if necessary for text scaling.
+
+The explicit no-new-tests instruction overrides skill TDD steps. Run existing checks and manual acceptance flows; no new cases or files. Existing visual selectors may be updated only for intentional changes. Keep current EPUB content geometry to avoid coupling this UI redesign to the newly integrated viewport-recovery behavior; redesign controls and palettes without a reading-measure or engine rewrite.
+
 ## Project-wide constraints
 
 - Flutter 3.41+ and Dart 3.10+; Android compile SDK API 36; device/emulator API 26+.
@@ -22,7 +30,7 @@ Implement the calm editorial typography, warm charcoal/paper surfaces, olive/sag
 - Do not add tests. Run appropriate existing checks and record manual acceptance evidence.
 - Preserve Hive field identifiers, settings keys, libraries, saved positions and existing catalog/download validation.
 - Preserve imports, book info/delete, queries, filters, pagination, scroll position, active downloads, source warnings/retries and the Anna's Archive interactive browser.
-- Preserve light/dark/system app appearance and independent Light/Sepia/Dark reader settings; do not change the stored/default theme choice.
+- Use dark-only Paper & Ink app appearance, as explicitly requested on 2026-10-14; preserve independent Light/Sepia/Dark reader settings and saved reader preferences.
 - Work only in this managed worktree; commit finished implementation on codex/tablet-ui-redesign; do not merge or push to main.
 - Do not clear device data, uninstall shared builds, interrupt another chat's emulator, or treat another build's screenshots as verification.
 - No decorative gradients, glass effects, ornamental animation, fabricated reading statistics, additional account/social features or Library search.
