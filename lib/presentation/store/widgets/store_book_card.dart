@@ -1,277 +1,180 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-
-import '../../../core/services/cache_config.dart';
 import '../../../data/repositories/store_repository.dart';
+import '../../shared/book_cover.dart';
 
 class StoreBookCard extends StatelessWidget {
   final UnifiedBook book;
   final VoidCallback onDownload;
   final bool isDownloading;
   final bool isDownloaded;
-  final VoidCallback? onCancel;
   final double downloadProgress;
-
+  final VoidCallback? onCancel;
   const StoreBookCard({
     super.key,
     required this.book,
     required this.onDownload,
     this.isDownloading = false,
     this.isDownloaded = false,
-    this.onCancel,
     this.downloadProgress = 0,
+    this.onCancel,
   });
 
+  static double itemExtent(BuildContext context, double width) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final lines = scaler.scale(16) > 24 ? 3 : 2;
+    final cover = width < 380 ? 88.0 : 112.0;
+    final metadata =
+        scaler.scale(16) * 1.4 * lines +
+        scaler.scale(14) * 1.45 +
+        scaler.scale(12) * 1.4 * 3 +
+        math.max(48, scaler.scale(14) * 1.4 + 24) +
+        104;
+    return 32 + math.max(cover * 1.5, metadata);
+  }
+
+  void _showDetails(BuildContext context) => showModalBottomSheet<void>(
+    context: context,
+    useRootNavigator: true,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(book.title, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            Text(book.author),
+            const SizedBox(height: 16),
+            Text('${book.source.label} · ${book.extension.toUpperCase()}'),
+            const SizedBox(height: 24),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
   @override
-  Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      elevation: 4,
-      shadowColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 4,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _buildCover(context),
-                // Format badge
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getFormatColor().withValues(alpha: 0.9),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      book.extension.toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final theme = Theme.of(context);
+      final scaler = MediaQuery.textScalerOf(context);
+      final lines = scaler.scale(16) > 24 ? 3 : 2;
+      final coverWidth = constraints.maxWidth < 380 ? 88.0 : 112.0;
+      final progress = downloadProgress.isFinite
+          ? downloadProgress.clamp(0.0, 1.0)
+          : 0.0;
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showDetails(context),
+          borderRadius: BorderRadius.circular(8),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: coverWidth,
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: BookCover(
+                        url: book.coverUrl,
+                        title: book.title,
+                        format: book.extension,
                       ),
                     ),
                   ),
-                ),
-                // Source badge
-                Positioned(
-                  top: 8,
-                  left: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: book.source == BookSource.annasArchive
-                          ? Colors.purple.withValues(alpha: 0.9)
-                          : Colors.orange.withValues(alpha: 0.9),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      _sourceBadge,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-                // Download progress overlay
-                if (isDownloading)
-                  Container(
-                    color: Colors.black54,
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(
-                            value: downloadProgress > 0
-                                ? downloadProgress
-                                : null,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            downloadProgress > 0
-                                ? '${(downloadProgress * 100).toInt()}%'
-                                : 'Connecting…',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          height: scaler.scale(16) * 1.4 * lines,
+                          child: Text(
+                            book.title,
+                            maxLines: lines,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 3,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    book.title,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    book.author,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const Spacer(),
-                  Row(
-                    children: [
-                      const Spacer(),
-                      SizedBox(
-                        height: 32,
-                        child: FilledButton.icon(
-                          onPressed: isDownloading ? onCancel : onDownload,
-                          icon: Icon(
-                            isDownloading
-                                ? Icons.close
-                                : isDownloaded
-                                ? Icons.library_books
-                                : Icons.download,
-                            size: 16,
-                          ),
-                          label: Text(
-                            isDownloading
-                                ? 'Cancel'
-                                : isDownloaded
-                                ? 'Library'
-                                : 'Get',
-                          ),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            textStyle: const TextStyle(fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          book.author,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        Text(
+                          '${book.source.label} · ${book.extension.toUpperCase()}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          height: scaler.scale(12) * 1.4 + 20,
+                          child: isDownloading
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      progress > 0
+                                          ? 'Downloading ${(progress * 100).toInt()}%'
+                                          : 'Connecting…',
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: theme.colorScheme.primary,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    LinearProgressIndicator(
+                                      value: progress > 0 ? progress : null,
+                                      minHeight: 4,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ],
+                                )
+                              : null,
+                        ),
+                        const SizedBox(height: 8),
+                        if (isDownloading)
+                          OutlinedButton(
+                            onPressed: onCancel,
+                            child: const Text('Cancel'),
+                          )
+                        else
+                          FilledButton(
+                            onPressed: onDownload,
+                            child: Text(isDownloaded ? 'Library' : 'Get'),
+                          ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCover(BuildContext context) {
-    if (book.coverUrl != null && book.coverUrl!.isNotEmpty) {
-      return CachedNetworkImage(
-        imageUrl: book.coverUrl!,
-        fit: BoxFit.cover,
-        placeholder: (_, __) => _buildPlaceholderCover(context),
-        errorWidget: (_, __, ___) => _buildPlaceholderCover(context),
-        cacheManager: BookCoverCacheManager(),
-        memCacheWidth: 300,
-        memCacheHeight: 450,
-        fadeInDuration: const Duration(milliseconds: 200),
+        ),
       );
-    }
-    return _buildPlaceholderCover(context);
-  }
-
-  Widget _buildPlaceholderCover(BuildContext context) {
-    final isPdf = book.extension.toLowerCase() == 'pdf';
-    final isAnnasArchive = book.source == BookSource.annasArchive;
-
-    // Source-specific gradient colors
-    final List<Color> gradientColors = isAnnasArchive
-        ? [Colors.purple[300]!, Colors.purple[700]!]
-        : [Colors.orange[300]!, Colors.orange[700]!];
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: gradientColors,
-        ),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Source badge in placeholder
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _sourceBadge,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Icon(
-              isPdf ? Icons.picture_as_pdf : Icons.book,
-              size: 40,
-              color: Colors.white.withValues(alpha: 0.9),
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                book.title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  height: 1.3,
-                ),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Color _getFormatColor() {
-    final ext = book.extension.toLowerCase();
-    if (ext == 'pdf') return Colors.red;
-    if (ext == 'epub') return Colors.blue;
-    return Colors.grey;
-  }
-
-  String get _sourceBadge => switch (book.source) {
-    BookSource.annasArchive => 'AA',
-    BookSource.libgen => 'LG',
-    BookSource.gutenberg => 'PG',
-    BookSource.standardEbooks => 'SE',
-  };
+    },
+  );
 }

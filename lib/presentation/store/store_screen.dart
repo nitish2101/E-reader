@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,9 @@ import 'bloc/store_bloc.dart';
 import 'widgets/store_book_card.dart';
 import 'anna_browser_screen.dart';
 import '../shared/active_tab_scope.dart';
+import '../shared/anchored_book_grid.dart';
+import '../shared/page_header.dart';
+import '../../core/theme/paper_ink_layout.dart';
 
 class StoreScreen extends StatelessWidget {
   const StoreScreen({super.key});
@@ -43,6 +47,7 @@ class _StoreContentState extends State<_StoreContent> {
   bool _active = true;
   bool _browserOpen = false;
   bool _sourcesEdited = false;
+  final _downloadBooks = <String, UnifiedBook>{};
   StoreState? _pendingNotice;
   int _shownNoticeVersion = 0;
 
@@ -79,6 +84,7 @@ class _StoreContentState extends State<_StoreContent> {
 
   void _submitSearch(String query, {bool debounce = false}) {
     final bloc = context.read<StoreBloc>();
+    if (query.trim() != bloc.state.query) _resetScroll();
     if (!_sourcesEdited) {
       final settings = context.read<SettingsRepository>();
       final defaults = <BookSource>{
@@ -118,148 +124,252 @@ class _StoreContentState extends State<_StoreContent> {
     final repository = context.read<StoreRepository>();
     final query = state.query;
     _browserOpen = true;
-    final result = await Navigator.push<AnnaBrowserResult>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AnnaBrowserScreen(
-          repository: repository,
-          initialUrl: book?.detailUrl != null
-              ? Uri.parse(book!.detailUrl!)
-              : repository.annaSearchUrl(query, state.formats),
-          book: book,
+    AnnaBrowserResult? result;
+    try {
+      result = await Navigator.push<AnnaBrowserResult>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AnnaBrowserScreen(
+            repository: repository,
+            initialUrl: book?.detailUrl != null
+                ? Uri.parse(book!.detailUrl!)
+                : repository.annaSearchUrl(query, state.formats),
+            book: book,
+          ),
         ),
-      ),
-    );
-    _browserOpen = false;
-    _showPendingNotice();
+      );
+    } finally {
+      _browserOpen = false;
+      _showPendingNotice();
+    }
     if (!mounted || result == null) return;
     if (result.search != null) {
       context.read<StoreBloc>().add(UseBrowserResults(query, result.search!));
     }
     if (result.download != null) {
+      _downloadBooks[result.download!.id] = result.download!;
       context.read<StoreBloc>().add(DownloadBook(result.download!));
     }
   }
 
+  void _getBook(StoreState state, UnifiedBook book) {
+    if (state.downloadedIds.contains(book.id)) {
+      context.go('/');
+    } else if (book.source == BookSource.annasArchive) {
+      _openAnna(state, book: book);
+    } else {
+      _downloadBooks[book.id] = book;
+      context.read<StoreBloc>().add(DownloadBook(book));
+    }
+  }
+
+  void _resetScroll() {
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Book Store')),
-    body: BlocConsumer<StoreBloc, StoreState>(
-      listenWhen: (previous, current) =>
-          previous.noticeVersion != current.noticeVersion,
-      listener: (context, state) {
-        _pendingNotice = state;
-        _showPendingNotice();
-      },
-      builder: (context, state) => Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onChanged: (query) {
-                setState(() {});
-                _submitSearch(query, debounce: true);
-              },
-              onSubmitted: _submitSearch,
-              decoration: InputDecoration(
-                hintText: 'Search title or author',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_searchController.text.isNotEmpty)
-                      IconButton(
-                        tooltip: 'Clear search',
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() {});
-                          context.read<StoreBloc>().add(const ClearSearch());
-                        },
+    body: SafeArea(
+      bottom: false,
+      child: BlocConsumer<StoreBloc, StoreState>(
+        listenWhen: (previous, current) =>
+            previous.noticeVersion != current.noticeVersion,
+        listener: (context, state) {
+          _pendingNotice = state;
+          _showPendingNotice();
+        },
+        builder: (context, state) => LayoutBuilder(
+          builder: (context, constraints) {
+            final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
+            final layout = PaperInkLayout.forWidth(
+              constraints.maxWidth,
+              textScale: scale,
+            );
+            final inner = constraints.maxWidth - layout.gutter * 2;
+            final columns = inner >= 840 && scale < 1.5 ? 2 : 1;
+            final preferred = context
+                .read<SettingsRepository>()
+                .getDownloadFormat();
+            final books = [
+              ...state.books.where((book) => book.extension == preferred),
+              ...state.books.where((book) => book.extension != preferred),
+            ];
+            final width = (inner - 24 * (columns - 1)) / columns;
+            final ids = books.map((book) => book.id).toList();
+            _downloadBooks.removeWhere(
+              (id, _) => !state.downloads.containsKey(id),
+            );
+            final footer = Padding(
+              padding: EdgeInsets.fromLTRB(layout.gutter, 0, layout.gutter, 32),
+              child: state.loadingMore
+                  ? const Center(child: CircularProgressIndicator())
+                  : state.hasMore && books.isNotEmpty
+                  ? OutlinedButton(
+                      onPressed: () => context.read<StoreBloc>().add(
+                        const LoadMoreResults(),
                       ),
+                      child: Text(
+                        state.error == null
+                            ? 'Load more books'
+                            : 'Retry loading more',
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            );
+            return AnchoredBookGrid(
+              ids: ids,
+              controller: _scrollController,
+              header: _header(state, layout.gutter, ids),
+              empty: _emptyContent(state),
+              footer: footer,
+              columns: columns,
+              itemExtent: StoreBookCard.itemExtent(context, width),
+              gutter: layout.gutter,
+              storageKey: 'store-scroll',
+              itemBuilder: (context, index) {
+                final book = books[index];
+                return StoreBookCard(
+                  book: book,
+                  isDownloading: state.downloads.containsKey(book.id),
+                  downloadProgress: state.downloads[book.id] ?? 0,
+                  isDownloaded: state.downloadedIds.contains(book.id),
+                  onCancel: () =>
+                      context.read<StoreBloc>().add(CancelDownload(book.id)),
+                  onDownload: () => _getBook(state, book),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    ),
+  );
+
+  Widget _header(StoreState state, double gutter, List<String> visibleIds) {
+    final colors = Theme.of(context).colorScheme;
+    final scaler = MediaQuery.textScalerOf(context);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(gutter, 24, gutter, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const PageHeader(title: 'Store'),
+          const SizedBox(height: 24),
+          TextField(
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            onChanged: (query) {
+              setState(() {});
+              _submitSearch(query, debounce: true);
+            },
+            onSubmitted: _submitSearch,
+            decoration: InputDecoration(
+              labelText: 'Search books',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              hintText: 'Title or author',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_searchController.text.isNotEmpty)
                     IconButton(
-                      tooltip: 'Search',
-                      icon: const Icon(Icons.arrow_forward),
-                      onPressed: () => _submitSearch(_searchController.text),
+                      tooltip: 'Clear search',
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                        _resetScroll();
+                        setState(() {});
+                        context.read<StoreBloc>().add(const ClearSearch());
+                      },
                     ),
-                  ],
+                  IconButton(
+                    tooltip: 'Search',
+                    icon: const Icon(Icons.arrow_forward),
+                    onPressed: () => _submitSearch(_searchController.text),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text('Format', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final format in Format.values)
+                FilterChip(
+                  label: Text(format.name.toUpperCase()),
+                  selected: state.formats.contains(format),
+                  labelStyle: TextStyle(
+                    color: state.formats.contains(format)
+                        ? colors.onPrimary
+                        : colors.onSurface,
+                  ),
+                  onSelected: (selected) {
+                    final formats = {...state.formats};
+                    selected ? formats.add(format) : formats.remove(format);
+                    if (formats.isNotEmpty) {
+                      _resetScroll();
+                      context.read<StoreBloc>().add(UpdateFilter(formats));
+                    }
+                  },
                 ),
-              ),
-            ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 8,
-                children: [
-                  for (final format in Format.values)
-                    FilterChip(
-                      label: Text(format.name.toUpperCase()),
-                      selected: state.formats.contains(format),
-                      onSelected: (selected) {
-                        final formats = {...state.formats};
-                        selected ? formats.add(format) : formats.remove(format);
-                        if (formats.isNotEmpty) {
-                          context.read<StoreBloc>().add(UpdateFilter(formats));
-                        }
-                      },
-                    ),
-                ],
-              ),
-            ),
+          const SizedBox(height: 16),
+          Text('Sources', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final source in BookSource.values)
+                FilterChip(
+                  label: Text(source.label),
+                  selected: state.sources.contains(source),
+                  labelStyle: TextStyle(
+                    color: state.sources.contains(source)
+                        ? colors.onPrimary
+                        : colors.onSurface,
+                  ),
+                  onSelected: (selected) {
+                    final sources = {...state.sources};
+                    selected ? sources.add(source) : sources.remove(source);
+                    if (sources.isNotEmpty) {
+                      _sourcesEdited = true;
+                      _resetScroll();
+                      context.read<StoreBloc>().add(
+                        UpdateSourceFilter(sources),
+                      );
+                    }
+                  },
+                ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 8,
-                children: [
-                  for (final source in BookSource.values)
-                    FilterChip(
-                      label: Text(source.label),
-                      selected: state.sources.contains(source),
-                      onSelected: (selected) {
-                        final sources = {...state.sources};
-                        selected ? sources.add(source) : sources.remove(source);
-                        if (sources.isNotEmpty) {
-                          _sourcesEdited = true;
-                          context.read<StoreBloc>().add(
-                            UpdateSourceFilter(sources),
-                          );
-                        }
-                      },
-                    ),
-                ],
-              ),
-            ),
-          ),
-          if (state.warnings.isNotEmpty ||
-              (state.error != null && state.books.isNotEmpty))
+          for (final warning in state.warnings)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              padding: const EdgeInsets.only(top: 16),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.info_outline, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      state.error ?? state.warnings.join('\n'),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _retry(state),
-                    child: const Text('Retry'),
-                  ),
+                  Icon(Icons.info_outline, color: colors.primary),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(warning)),
                 ],
               ),
+            ),
+          if (state.error != null && state.books.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Text(state.error!),
+            ),
+          if (state.warnings.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => _retry(state),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry search'),
             ),
           if (state.sources.contains(BookSource.annasArchive) &&
               state.query.isNotEmpty)
@@ -268,13 +378,67 @@ class _StoreContentState extends State<_StoreContent> {
               icon: const Icon(Icons.public),
               label: const Text("Open Anna's Archive"),
             ),
-          Expanded(child: _content(state)),
+          for (final id in state.downloads.keys.where(
+            (id) => !visibleIds.contains(id),
+          ))
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _downloadBooks[id]?.title ?? 'Book download',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        state.downloads[id]! > 0
+                            ? 'Downloading ${(state.downloads[id]! * 100).toInt()}%'
+                            : 'Connecting…',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(
+                        value: state.downloads[id]! > 0
+                            ? state.downloads[id]!.clamp(0, 1)
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: () =>
+                            context.read<StoreBloc>().add(CancelDownload(id)),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (state.status == SearchStatus.searching && state.books.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 16),
+              child: LinearProgressIndicator(),
+            ),
+          if (state.books.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Text(
+              state.query.isEmpty
+                  ? 'Popular classics · Gutenberg and Standard Ebooks'
+                  : '${state.books.length} book files',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ],
+          SizedBox(height: math.max(8, scaler.scale(12) / 2)),
         ],
       ),
-    ),
-  );
+    );
+  }
 
-  Widget _content(StoreState state) {
+  Widget _emptyContent(StoreState state) {
     if (state.status == SearchStatus.searching && state.books.isEmpty) {
       return const Center(
         child: Column(
@@ -333,85 +497,7 @@ class _StoreContentState extends State<_StoreContent> {
             : null,
       );
     }
-    return Column(
-      children: [
-        if (state.status == SearchStatus.searching)
-          const LinearProgressIndicator(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              state.query.isEmpty
-                  ? 'Popular classics · Gutenberg and Standard Ebooks'
-                  : '${state.books.length} book files',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-          ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final preferred = context
-                  .read<SettingsRepository>()
-                  .getDownloadFormat();
-              final visibleBooks = [
-                ...state.books.where((b) => b.extension == preferred),
-                ...state.books.where((b) => b.extension != preferred),
-              ];
-              final columns = (constraints.maxWidth / 190).floor().clamp(2, 6);
-              return GridView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  mainAxisExtent: 340,
-                ),
-                itemCount: state.books.length,
-                itemBuilder: (context, index) {
-                  final book = visibleBooks[index];
-                  return StoreBookCard(
-                    book: book,
-                    isDownloading: state.downloads.containsKey(book.id),
-                    downloadProgress: state.downloads[book.id] ?? 0,
-                    isDownloaded: state.downloadedIds.contains(book.id),
-                    onCancel: () =>
-                        context.read<StoreBloc>().add(CancelDownload(book.id)),
-                    onDownload: () {
-                      if (state.downloadedIds.contains(book.id)) {
-                        context.go('/');
-                      } else if (book.source == BookSource.annasArchive) {
-                        _openAnna(state, book: book);
-                      } else {
-                        context.read<StoreBloc>().add(DownloadBook(book));
-                      }
-                    },
-                  );
-                },
-              );
-            },
-          ),
-        ),
-        if (state.loadingMore)
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: CircularProgressIndicator(),
-          )
-        else if (state.hasMore)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: OutlinedButton(
-              onPressed: () =>
-                  context.read<StoreBloc>().add(const LoadMoreResults()),
-              child: Text(
-                state.error == null ? 'Load more books' : 'Retry loading more',
-              ),
-            ),
-          ),
-      ],
-    );
+    return const SizedBox.shrink();
   }
 
   Widget _message(
@@ -419,24 +505,24 @@ class _StoreContentState extends State<_StoreContent> {
     String title,
     String description, {
     Widget? action,
-  }) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 64, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleLarge,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(description, textAlign: TextAlign.center),
-          if (action != null) ...[const SizedBox(height: 16), action],
-        ],
-      ),
+  }) => Padding(
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(height: 16),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleLarge,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 12),
+        Text(description, textAlign: TextAlign.center),
+        if (action != null) ...[const SizedBox(height: 24), action],
+      ],
     ),
   );
 }
