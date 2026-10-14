@@ -7,6 +7,7 @@ import '../../data/repositories/settings_repository.dart';
 import 'bloc/store_bloc.dart';
 import 'widgets/store_book_card.dart';
 import 'anna_browser_screen.dart';
+import '../shared/active_tab_scope.dart';
 
 class StoreScreen extends StatelessWidget {
   const StoreScreen({super.key});
@@ -39,6 +40,61 @@ class _StoreContent extends StatefulWidget {
 class _StoreContentState extends State<_StoreContent> {
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
+  bool _active = true;
+  bool _browserOpen = false;
+  bool _sourcesEdited = false;
+  StoreState? _pendingNotice;
+  int _shownNoticeVersion = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _active = ActiveTabScope.isActiveOf(context);
+    if (_active && _pendingNotice != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showPendingNotice());
+    }
+  }
+
+  void _showPendingNotice() {
+    if (!mounted || !_active || _browserOpen) return;
+    final state = _pendingNotice;
+    if (state == null || state.noticeVersion <= _shownNoticeVersion) return;
+    _pendingNotice = null;
+    _shownNoticeVersion = state.noticeVersion;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(state.notice!),
+        backgroundColor: state.noticeIsError
+            ? Theme.of(context).colorScheme.errorContainer
+            : null,
+        action: state.noticeIsError
+            ? null
+            : SnackBarAction(
+                label: 'Library',
+                onPressed: () => context.go('/'),
+              ),
+      ),
+    );
+  }
+
+  void _submitSearch(String query, {bool debounce = false}) {
+    final bloc = context.read<StoreBloc>();
+    if (!_sourcesEdited) {
+      final settings = context.read<SettingsRepository>();
+      final defaults = <BookSource>{
+        if (settings.getSearchAnnasArchive()) BookSource.annasArchive,
+        if (settings.getSearchLibgen()) BookSource.libgen,
+        if (settings.getSearchGutenberg()) BookSource.gutenberg,
+        if (settings.getSearchStandardEbooks()) BookSource.standardEbooks,
+      };
+      if (defaults.isNotEmpty &&
+          (defaults.length != bloc.state.sources.length ||
+              !defaults.containsAll(bloc.state.sources))) {
+        bloc.add(UpdateSourceFilter(defaults));
+      }
+    }
+    bloc.add(SearchBooks(query, debounce: debounce));
+  }
 
   @override
   void dispose() {
@@ -61,6 +117,7 @@ class _StoreContentState extends State<_StoreContent> {
   Future<void> _openAnna(StoreState state, {UnifiedBook? book}) async {
     final repository = context.read<StoreRepository>();
     final query = state.query;
+    _browserOpen = true;
     final result = await Navigator.push<AnnaBrowserResult>(
       context,
       MaterialPageRoute(
@@ -73,6 +130,8 @@ class _StoreContentState extends State<_StoreContent> {
         ),
       ),
     );
+    _browserOpen = false;
+    _showPendingNotice();
     if (!mounted || result == null) return;
     if (result.search != null) {
       context.read<StoreBloc>().add(UseBrowserResults(query, result.search!));
@@ -89,21 +148,8 @@ class _StoreContentState extends State<_StoreContent> {
       listenWhen: (previous, current) =>
           previous.noticeVersion != current.noticeVersion,
       listener: (context, state) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(state.notice!),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: state.noticeIsError
-                ? Theme.of(context).colorScheme.error
-                : null,
-            action: state.noticeIsError
-                ? null
-                : SnackBarAction(
-                    label: 'Library',
-                    onPressed: () => context.go('/'),
-                  ),
-          ),
-        );
+        _pendingNotice = state;
+        _showPendingNotice();
       },
       builder: (context, state) => Column(
         children: [
@@ -114,12 +160,9 @@ class _StoreContentState extends State<_StoreContent> {
               textInputAction: TextInputAction.search,
               onChanged: (query) {
                 setState(() {});
-                context.read<StoreBloc>().add(
-                  SearchBooks(query, debounce: true),
-                );
+                _submitSearch(query, debounce: true);
               },
-              onSubmitted: (query) =>
-                  context.read<StoreBloc>().add(SearchBooks(query)),
+              onSubmitted: _submitSearch,
               decoration: InputDecoration(
                 hintText: 'Search title or author',
                 prefixIcon: const Icon(Icons.search),
@@ -139,9 +182,7 @@ class _StoreContentState extends State<_StoreContent> {
                     IconButton(
                       tooltip: 'Search',
                       icon: const Icon(Icons.arrow_forward),
-                      onPressed: () => context.read<StoreBloc>().add(
-                        SearchBooks(_searchController.text),
-                      ),
+                      onPressed: () => _submitSearch(_searchController.text),
                     ),
                   ],
                 ),
@@ -186,6 +227,7 @@ class _StoreContentState extends State<_StoreContent> {
                         final sources = {...state.sources};
                         selected ? sources.add(source) : sources.remove(source);
                         if (sources.isNotEmpty) {
+                          _sourcesEdited = true;
                           context.read<StoreBloc>().add(
                             UpdateSourceFilter(sources),
                           );
