@@ -1516,7 +1516,7 @@ function loadBook(data, cfi, initialXPath, manager, flow, spread, snap, allowScr
   });
   rendition.themes.fontSize(fontSize + "px");
   //set background and foreground color
-  updateTheme(backgroundColor, foregroundColor);
+  updateTheme(backgroundColor, foregroundColor, customCss);
 }
 
 window.addEventListener("flutterInAppWebViewPlatformReady", function (event) {
