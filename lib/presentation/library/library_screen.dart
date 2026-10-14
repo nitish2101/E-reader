@@ -29,6 +29,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final _scrollController = ScrollController();
   LibrarySort _sort = LibrarySort.recentlyRead;
   List<BookModel> _lastBooks = [];
+  LibraryState? _pendingNotice;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (ActiveTabScope.isActiveOf(context) && _pendingNotice != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showPendingNotice());
+    }
+  }
+
+  void _showPendingNotice() {
+    if (!mounted || !ActiveTabScope.isActiveOf(context)) return;
+    final state = _pendingNotice;
+    _pendingNotice = null;
+    final messenger = ScaffoldMessenger.of(context);
+    if (state is BookImported) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Added "${state.importedBook.title}" to library'),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () => _openBook(context, state.importedBook),
+          ),
+        ),
+      );
+    } else if (state is BookDeleted) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Book removed from library')),
+      );
+    } else if (state is LibraryError) {
+      messenger.showSnackBar(SnackBar(content: Text(state.message)));
+    }
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
@@ -56,24 +90,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       bottom: false,
       child: BlocConsumer<LibraryBloc, LibraryState>(
         listener: (context, state) {
-          if (!ActiveTabScope.isActiveOf(context)) return;
-          final messenger = ScaffoldMessenger.of(context);
-          if (state is BookImported) {
-            messenger.showSnackBar(
-              SnackBar(
-                content: Text('Added "${state.importedBook.title}" to library'),
-                action: SnackBarAction(
-                  label: 'Open',
-                  onPressed: () => _openBook(context, state.importedBook),
-                ),
-              ),
-            );
-          } else if (state is BookDeleted) {
-            messenger.showSnackBar(
-              const SnackBar(content: Text('Book removed from library')),
-            );
-          } else if (state is LibraryError) {
-            messenger.showSnackBar(SnackBar(content: Text(state.message)));
+          if (state is BookImported ||
+              state is BookDeleted ||
+              state is LibraryError) {
+            _pendingNotice = state;
+            _showPendingNotice();
           }
         },
         builder: (context, state) => LayoutBuilder(

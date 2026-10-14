@@ -48,8 +48,7 @@ class _AnchoredBookGridState extends State<AnchoredBookGrid> {
     String? anchor;
     int previousIndex = 0;
     double offsetInRow = 0;
-    if (changed &&
-        _columns != null &&
+    if (_columns != null &&
         _extent != null &&
         _ids.isNotEmpty &&
         widget.controller.hasClients &&
@@ -63,12 +62,15 @@ class _AnchoredBookGridState extends State<AnchoredBookGrid> {
     _columns = widget.columns;
     _extent = widget.itemExtent;
     _ids = [...widget.ids];
+    final previousHeaderHeight = _headerHeight;
     final version = ++_layoutVersion;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || version != _layoutVersion) return;
       final box = _headerKey.currentContext?.findRenderObject();
       _headerHeight = box is RenderBox ? box.size.height : 0;
-      if (anchor != null &&
+      final headerChanged = (_headerHeight - previousHeaderHeight).abs() > 0.5;
+      if ((changed || headerChanged) &&
+          anchor != null &&
           widget.controller.hasClients &&
           widget.ids.isNotEmpty) {
         final found = widget.ids.indexOf(anchor);
