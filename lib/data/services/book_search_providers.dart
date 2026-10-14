@@ -21,17 +21,73 @@ class BookSearchProviders {
   final List<String> annaMirrors;
   final List<String> libgenMirrors;
   final String gutenbergUrl;
+  final Future<Map<String, String>> Function(Uri)? requestHeaders;
   final Map<String, ({DateTime until, String reason})> _failedMirrors = {};
   final Map<BookSource, String> _preferredMirrors = {};
 
   void resetMirrorHealth() => _failedMirrors.clear();
+
+  Uri get preferredAnnaMirror => Uri.parse(
+    _preferredMirrors[BookSource.annasArchive] ?? annaMirrors.first,
+  );
 
   BookSearchProviders(
     this.dio, {
     this.annaMirrors = defaultAnnaMirrors,
     this.libgenMirrors = defaultLibgenMirrors,
     this.gutenbergUrl = 'https://gutendex.com/books/',
+    this.requestHeaders,
   });
+
+  void preferAnnaMirror(Uri url) {
+    final mirror = annaMirrors.firstWhere(
+      (m) => Uri.parse(m).origin == url.origin,
+    );
+    _failedMirrors.remove(mirror);
+    _preferredMirrors[BookSource.annasArchive] = mirror;
+  }
+
+  Future<Response<String>> _catalogPage(
+    String url,
+    Map<String, dynamic> query,
+    CancelToken token,
+  ) async {
+    var uri = Uri.parse(url);
+    Map<String, dynamic>? parameters = query;
+    for (var redirects = 0; redirects < 6; redirects++) {
+      token.throwIfCancellationRequested();
+      final headers = await requestHeaders?.call(uri) ?? <String, String>{};
+      token.throwIfCancellationRequested();
+      final response = await dio.get<String>(
+        uri.toString(),
+        queryParameters: parameters,
+        cancelToken: token,
+        options: Options(
+          responseType: ResponseType.plain,
+          receiveTimeout: const Duration(seconds: 6),
+          sendTimeout: const Duration(seconds: 6),
+          headers: headers,
+          followRedirects: false,
+          validateStatus: (status) =>
+              status != null && status >= 200 && status < 400,
+        ),
+      );
+      if (![301, 302, 303, 307, 308].contains(response.statusCode)) {
+        return response;
+      }
+      final location = response.headers.value('location');
+      if (location == null) {
+        break;
+      }
+      final target = response.realUri.resolve(location);
+      if (!isHttpUrl(target.toString())) break;
+      uri = target;
+      parameters = null;
+    }
+    throw const StoreRepositoryException(
+      'The catalog returned an unusable redirect.',
+    );
+  }
 
   Future<StoreSearchResult> search(
     BookSource source,
@@ -65,13 +121,13 @@ class BookSearchProviders {
       final modernLibgen =
           source == BookSource.libgen && Uri.parse(mirror).host == 'libgen.li';
       try {
-        final response = await dio.get<String>(
+        final response = await _catalogPage(
           '$mirror/${source == BookSource.annasArchive
               ? 'search'
               : modernLibgen
               ? 'index.php'
               : 'search.php'}',
-          queryParameters: source == BookSource.annasArchive
+          source == BookSource.annasArchive
               ? {
                   'q': query,
                   'page': page,
@@ -90,12 +146,7 @@ class BookSearchProviders {
                   'topics[]': ['l', 'f', 'r'],
                 }
               : {'req': query, 'page': page, 'res': 25, 'column': 'def'},
-          cancelToken: token,
-          options: Options(
-            responseType: ResponseType.plain,
-            receiveTimeout: const Duration(seconds: 6),
-            sendTimeout: const Duration(seconds: 6),
-          ),
+          token,
         );
         final body = response.data ?? '';
         final result = source == BookSource.annasArchive
@@ -402,16 +453,20 @@ class BookSearchProviders {
   }
 
   static void _rejectChallenge(String body) {
-    final document = html.parse(body);
-    final title = document.querySelector('title')?.text.toLowerCase() ?? '';
-    if (title.contains('ddos-guard') ||
-        title.contains('just a moment') ||
-        title.contains('attention required') ||
-        document.querySelector('#challenge-form') != null) {
+    if (requiresBrowserVerification(body)) {
       throw const StoreRepositoryException(
         'The server requires browser verification (anti-bot challenge).',
       );
     }
+  }
+
+  static bool requiresBrowserVerification(String body) {
+    final document = html.parse(body);
+    final title = document.querySelector('title')?.text.toLowerCase() ?? '';
+    return title.contains('ddos-guard') ||
+        title.contains('just a moment') ||
+        title.contains('attention required') ||
+        document.querySelector('#challenge-form') != null;
   }
 
   static bool _hasNext(Document document, Uri base, int page) =>

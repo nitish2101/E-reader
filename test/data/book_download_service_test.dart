@@ -27,6 +27,77 @@ void main() {
     await directory.delete(recursive: true);
   });
   test(
+    'Anna resolves a free partner download without browsing or import',
+    () async {
+      adapter.respond = (request) {
+        if (request.uri.path.startsWith('/md5/')) {
+          return ResponseBody.fromString(
+            '<a href="/slow_download/abc/0/0">Slow Partner Server #1</a>',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['text/html'],
+            },
+          );
+        }
+        if (request.uri.path.startsWith('/slow_download/')) {
+          return ResponseBody.fromString(
+            '<a href="https://files.example/book.pdf">Download now</a>',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['text/html'],
+            },
+          );
+        }
+        return ResponseBody.fromString(pdf, 200);
+      };
+      final path = await service.download(
+        const UnifiedBook(
+          title: 'Anna book',
+          extension: 'pdf',
+          source: BookSource.annasArchive,
+          detailUrl: 'https://annas-archive.pk/md5/abc',
+        ),
+        CancelToken(),
+        (_) {},
+      );
+      expect(await File(path).readAsString(), pdf);
+      expect(adapter.requests.map((r) => r.uri.path), [
+        '/md5/abc',
+        '/slow_download/abc/0/0',
+        '/book.pdf',
+      ]);
+      expect(await directory.list().toList(), hasLength(1));
+    },
+  );
+  test(
+    'blocked Anna download identifies the exact page needing verification',
+    () async {
+      adapter.respond = (_) => ResponseBody.fromString('Forbidden', 403);
+      await expectLater(
+        service.download(
+          const UnifiedBook(
+            title: 'Blocked',
+            extension: 'pdf',
+            source: BookSource.annasArchive,
+            detailUrl: 'https://annas-archive.pk/md5/abc',
+            md5: 'abc',
+          ),
+          CancelToken(),
+          (_) {},
+        ),
+        throwsA(
+          isA<BrowserVerificationRequired>().having(
+            (e) => e.url.toString(),
+            'blocked page',
+            'https://annas-archive.pk/md5/abc',
+          ),
+        ),
+      );
+      expect(await directory.list().toList(), isEmpty);
+      expect(adapter.requests, hasLength(1));
+    },
+  );
+  test(
     'rejects HTML even with a binary MIME type and removes partial file',
     () async {
       adapter.respond = (_) => ResponseBody.fromString(

@@ -39,7 +39,13 @@ class UpdateSourceFilter extends StoreEvent {
 
 class DownloadBook extends StoreEvent {
   final UnifiedBook book;
-  const DownloadBook(this.book);
+  final bool allowBrowserVerification;
+  const DownloadBook(this.book, {this.allowBrowserVerification = true});
+}
+
+class ConsumeDownloadVerification extends StoreEvent {
+  final DownloadVerification request;
+  const ConsumeDownloadVerification(this.request);
 }
 
 class CancelDownload extends StoreEvent {

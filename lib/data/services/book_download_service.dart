@@ -40,7 +40,9 @@ class BookDownloadService {
         (url: book.downloadUrl!, depth: 0, attempt: 0),
       ...book.alternateUrls.map((url) => (url: url, depth: 0, attempt: 0)),
       if (book.detailUrl != null) (url: book.detailUrl!, depth: 0, attempt: 0),
-      if (book.md5 != null) ...[
+      if (book.md5 != null &&
+          (book.source != BookSource.annasArchive ||
+              book.detailUrl == null)) ...[
         (url: 'https://library.lol/main/${book.md5}', depth: 0, attempt: 0),
         (
           url: 'https://libgen.li/ads.php?md5=${book.md5}',
@@ -51,6 +53,7 @@ class BookDownloadService {
     ];
     final visited = <String>{};
     String reason = 'No usable download link was provided.';
+    Uri? verificationUrl;
     final timer = Timer(
       const Duration(minutes: 3),
       () => token.cancel(
@@ -129,17 +132,27 @@ class BookDownloadService {
                 throw const FormatException('Download page is too large.');
               }
             }
-            if (candidate.depth < 2) {
-              final links = extractDownloadLinks(
-                utf8.decode(bytes, allowMalformed: true),
-                response.realUri,
-              );
+            final page = utf8.decode(bytes, allowMalformed: true);
+            if (book.source == BookSource.annasArchive &&
+                BookSearchProviders.requiresBrowserVerification(page)) {
+              verificationUrl ??= response.realUri;
+              continue;
+            }
+            final links = extractDownloadLinks(page, response.realUri);
+            if (candidate.depth < 4) {
               queue.insertAll(
                 0,
                 links.map(
                   (url) => (url: url, depth: candidate.depth + 1, attempt: 0),
                 ),
               );
+            }
+            // Free partner pages can require an interactive check or a server
+            // countdown. Let the user see that page only when HTTP cannot proceed.
+            if (book.source == BookSource.annasArchive &&
+                links.isEmpty &&
+                response.realUri.path.startsWith('/slow_download/')) {
+              verificationUrl ??= response.realUri;
             }
             reason =
                 'The source returned a web page, login, or waiting screen instead of a book.';
@@ -177,6 +190,9 @@ class BookDownloadService {
         } on DioException catch (error) {
           if (CancelToken.isCancel(error)) rethrow;
           final status = error.response?.statusCode;
+          if (book.source == BookSource.annasArchive && status == 403) {
+            verificationUrl ??= Uri.parse(candidate.url);
+          }
           final transient =
               (status != null &&
                   (status >= 500 || status == 408 || status == 429)) ||
@@ -199,6 +215,9 @@ class BookDownloadService {
         } finally {
           if (await partial.exists()) await partial.delete();
         }
+      }
+      if (verificationUrl != null) {
+        throw BrowserVerificationRequired(verificationUrl);
       }
       throw StoreRepositoryException('$reason Try another edition or source.');
     } finally {
@@ -251,6 +270,7 @@ class BookDownloadService {
               ).hasMatch(path)) ||
           path.contains('/get.php') ||
           path.contains('/ads.php') ||
+          (path.startsWith('/slow_download/') && uri.origin == base.origin) ||
           uri.host == 'library.lol' ||
           link.attributes.containsKey('download')) {
         if (BookSearchProviders.isHttpUrl(uri.toString())) {

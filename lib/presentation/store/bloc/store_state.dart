@@ -18,6 +18,7 @@ class StoreState extends Equatable {
   final String? notice;
   final bool noticeIsError;
   final int noticeVersion;
+  final List<DownloadVerification> verificationRequests;
 
   const StoreState({
     this.status = SearchStatus.initial,
@@ -40,6 +41,7 @@ class StoreState extends Equatable {
     this.notice,
     this.noticeIsError = false,
     this.noticeVersion = 0,
+    this.verificationRequests = const [],
   });
 
   StoreState copyWith({
@@ -58,6 +60,7 @@ class StoreState extends Equatable {
     Set<String>? downloadedIds,
     String? notice,
     bool? noticeIsError,
+    List<DownloadVerification>? verificationRequests,
   }) => StoreState(
     status: status ?? this.status,
     query: query ?? this.query,
@@ -74,6 +77,7 @@ class StoreState extends Equatable {
     notice: notice ?? this.notice,
     noticeIsError: noticeIsError ?? this.noticeIsError,
     noticeVersion: notice == null ? noticeVersion : noticeVersion + 1,
+    verificationRequests: verificationRequests ?? this.verificationRequests,
   );
 
   @override
@@ -93,5 +97,6 @@ class StoreState extends Equatable {
     notice,
     noticeIsError,
     noticeVersion,
+    verificationRequests,
   ];
 }

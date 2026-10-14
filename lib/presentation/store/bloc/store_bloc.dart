@@ -29,6 +29,15 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
     },
   }) : super(StoreState(sources: initialSources)) {
     on<SearchBooks>(_onSearch);
+    on<ConsumeDownloadVerification>(
+      (event, emit) => emit(
+        state.copyWith(
+          verificationRequests: state.verificationRequests
+              .where((r) => r != event.request)
+              .toList(),
+        ),
+      ),
+    );
     on<UseBrowserResults>((event, emit) {
       _invalidateSearch();
       emit(
@@ -43,9 +52,11 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
             ),
           ]),
           page: 1,
-          hasMore: false,
+          hasMore: event.result.hasMore,
           loadingMore: false,
-          warnings: [],
+          warnings: state.warnings
+              .where((w) => !w.startsWith('${BookSource.annasArchive.label}:'))
+              .toList(),
           clearError: true,
         ),
       );
@@ -283,7 +294,20 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
       path = null; // Library now owns the file.
     } catch (error) {
       if (path != null && await File(path).exists()) await File(path).delete();
-      if (!emit.isDone && !isClosed) {
+      if (!emit.isDone &&
+          !isClosed &&
+          error is BrowserVerificationRequired &&
+          !token.isCancelled &&
+          event.allowBrowserVerification) {
+        emit(
+          state.copyWith(
+            verificationRequests: [
+              ...state.verificationRequests,
+              DownloadVerification(book, error.url),
+            ],
+          ),
+        );
+      } else if (!emit.isDone && !isClosed) {
         emit(
           state.copyWith(
             notice: token.cancelError?.error is TimeoutException

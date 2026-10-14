@@ -16,6 +16,70 @@ void main() {
   });
   tearDown(() => repository.dispose());
 
+  test(
+    'search redirects do not forward verification cookies to another host',
+    () async {
+      repository.registerBrowserSession(
+        Uri.parse('https://annas-archive.pk/search'),
+        (_) async => {'Cookie': 'verified=yes'},
+      );
+      adapter.respond = (request) => request.uri.host == 'annas-archive.pk'
+          ? ResponseBody.fromString(
+              '',
+              302,
+              headers: {
+                'location': ['https://other.example/search'],
+              },
+            )
+          : ResponseBody.fromString('<p>No files found</p>', 200);
+      final result = await repository.searchBooks(
+        query: 'book',
+        sources: {BookSource.annasArchive},
+      );
+      expect(result.books, isEmpty);
+      expect(adapter.requests.first.headers['Cookie'], 'verified=yes');
+      expect(adapter.requests.last.uri.host, 'other.example');
+      expect(adapter.requests.last.headers.containsKey('Cookie'), isFalse);
+    },
+  );
+
+  test(
+    'verification reuses the chosen mirror and session on later searches',
+    () async {
+      adapter.respond = (_) => ResponseBody.fromString('Forbidden', 403);
+      await expectLater(
+        repository.searchBooks(
+          query: 'first',
+          sources: {BookSource.annasArchive},
+        ),
+        throwsA(isA<StoreRepositoryException>()),
+      );
+      repository.registerBrowserSession(
+        Uri.parse('https://annas-archive.pk/search'),
+        (_) async => {'Cookie': 'verified=yes', 'User-Agent': 'Browser-UA'},
+      );
+      adapter.requests.clear();
+      adapter.respond = (request) => ResponseBody.fromString(
+        request.headers['Cookie'] == 'verified=yes'
+            ? '<p>No files found</p>'
+            : 'Forbidden',
+        request.headers['Cookie'] == 'verified=yes' ? 200 : 403,
+      );
+      final result = await repository.searchBooks(
+        query: 'second',
+        sources: {BookSource.annasArchive},
+      );
+      expect(result.books, isEmpty);
+      expect(adapter.requests.single.uri.host, 'annas-archive.pk');
+      expect(adapter.requests.single.headers['User-Agent'], 'Browser-UA');
+      expect(adapter.requests.single.followRedirects, isFalse);
+      expect(
+        repository.annaSearchUrl('third', {Format.epub}).host,
+        'annas-archive.pk',
+      );
+    },
+  );
+
   test('Retry immediately recontacts mirrors paused after an outage', () async {
     adapter.respond = (_) => ResponseBody.fromString('Forbidden', 403);
     await expectLater(

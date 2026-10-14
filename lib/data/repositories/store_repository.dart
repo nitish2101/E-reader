@@ -19,22 +19,26 @@ class StoreRepository {
   bool isAnnaUrl(Uri url) =>
       annaMirrors.any((mirror) => mirror.origin == url.origin);
 
-  Uri annaSearchUrl(String query, Set<Format> formats) =>
-      Uri.parse(_providers.annaMirrors.first)
-          .resolve('search')
-          .replace(
-            queryParameters: {
-              'q': query,
-              'ext': formats.map((f) => f.name).toList(),
-              'content': ['book_fiction', 'book_nonfiction', 'book_unknown'],
-            },
-          );
+  Uri annaSearchUrl(String query, Set<Format> formats) => _providers
+      .preferredAnnaMirror
+      .resolve('search')
+      .replace(
+        queryParameters: {
+          'q': query,
+          'ext': formats.map((f) => f.name).toList(),
+          'content': ['book_fiction', 'book_nonfiction', 'book_unknown'],
+        },
+      );
 
   void registerBrowserSession(
     Uri url,
     Future<Map<String, String>> Function(Uri) headers,
   ) {
     _browserSessions[url.origin] = headers;
+    if (isAnnaUrl(url)) {
+      _providers.preferAnnaMirror(url);
+      _cache.clear();
+    }
   }
 
   final Map<String, ({DateTime fetchedAt, StoreSearchResult result})> _cache =
@@ -61,6 +65,7 @@ class StoreRepository {
            ) {
     _providers = BookSearchProviders(
       _dio,
+      requestHeaders: _sessionHeaders,
       annaMirrors:
           annaMirrors ??
           const [
@@ -96,10 +101,12 @@ class StoreRepository {
             final appDir = await getApplicationDocumentsDirectory();
             return Directory('${appDir.path}/books');
           },
-      requestHeaders: (uri) async =>
-          await _browserSessions[uri.origin]?.call(uri) ?? {},
+      requestHeaders: _sessionHeaders,
     );
   }
+
+  Future<Map<String, String>> _sessionHeaders(Uri uri) async =>
+      await _browserSessions[uri.origin]?.call(uri) ?? {};
 
   Future<StoreSearchResult> searchBooks({
     required String query,

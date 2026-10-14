@@ -9,10 +9,23 @@ import 'package:ereader/data/repositories/book_repository.dart';
 import 'package:ereader/data/repositories/settings_repository.dart';
 import 'package:ereader/data/repositories/store_repository.dart';
 import 'package:ereader/presentation/store/store_screen.dart';
+import 'package:ereader/presentation/store/widgets/store_book_card.dart';
+import 'package:ereader/presentation/store/anna_browser_screen.dart';
+import '../support/anna_webview.dart';
 
 class ScreenCatalog extends StoreRepository {
   bool offline = false;
   bool emptyPage = false;
+  bool annaOnly = false;
+  @override
+  Future<String> downloadBook({
+    required UnifiedBook book,
+    required CancelToken cancelToken,
+    required void Function(double) onProgress,
+  }) async {
+    throw const StoreRepositoryException('Transfer reached the app downloader');
+  }
+
   @override
   Future<StoreSearchResult> searchBooks({
     required String query,
@@ -28,6 +41,19 @@ class ScreenCatalog extends StoreRepository {
       throw const StoreRepositoryException('Catalog is offline. Try again.');
     }
     if (emptyPage) return const StoreSearchResult(books: [], hasMore: true);
+    if (annaOnly) {
+      return const StoreSearchResult(
+        books: [
+          UnifiedBook(
+            title: 'Anna book',
+            extension: 'epub',
+            source: BookSource.annasArchive,
+            md5: 'abc',
+            detailUrl: 'https://annas-archive.pk/md5/abc',
+          ),
+        ],
+      );
+    }
     return const StoreSearchResult(
       books: [
         UnifiedBook(
@@ -55,6 +81,7 @@ void main() {
   late ScreenCatalog repository;
   setUpAll(() => Hive.registerAdapter(BookModelAdapter()));
   setUp(() async {
+    installAnnaWebView();
     temp = await Directory.systemTemp.createTemp('store-screen-');
     Hive.init(temp.path);
     books = await Hive.openBox<BookModel>('books');
@@ -83,6 +110,18 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Anna Download goes straight to the app downloader', (
+    tester,
+  ) async {
+    repository.annaOnly = true;
+    await mount(tester);
+    final card = tester.widget<StoreBookCard>(find.byType(StoreBookCard));
+    card.onDownload();
+    await tester.pumpAndSettle();
+    expect(find.text('Transfer reached the app downloader'), findsOneWidget);
+    expect(find.byType(AnnaBrowserScreen), findsNothing);
+  });
 
   testWidgets('book controls and cards fit a phone and tablet', (tester) async {
     for (final size in [const Size(360, 640), const Size(1024, 768)]) {

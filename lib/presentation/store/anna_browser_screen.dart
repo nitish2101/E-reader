@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../../data/repositories/store_repository.dart';
 import '../../data/services/book_search_providers.dart';
+import '../../data/services/book_download_service.dart';
 
 class AnnaBrowserResult {
   final StoreSearchResult? search;
@@ -10,7 +12,7 @@ class AnnaBrowserResult {
 }
 
 /// The user completes the source's own verification in a normal WebView.
-/// Read search HTML only on request; never solve or skip the challenge.
+/// Return verified results to Store; never solve or skip the challenge.
 class AnnaBrowserScreen extends StatefulWidget {
   final StoreRepository repository;
   final Uri initialUrl;
@@ -32,6 +34,23 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
   String? _error;
   int _progress = 0;
   bool _busy = false;
+  bool _completed = false;
+  Timer? _pageWatcher;
+  int _navigationVersion = 0;
+  DownloadStartRequest? _pendingDownload;
+
+  void _releaseBusy() {
+    _busy = false;
+    final request = _pendingDownload;
+    _pendingDownload = null;
+    if (mounted && !_completed && request != null) _download(request);
+  }
+
+  @override
+  void dispose() {
+    _pageWatcher?.cancel();
+    super.dispose();
+  }
 
   Future<void> _registerSession(Uri url) async {
     final userAgent = await _controller?.evaluateJavascript(
@@ -51,15 +70,18 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
     });
   }
 
-  Future<void> _useResults() async {
-    if (_busy || _controller == null) return;
+  Future<void> _useResults({bool reportError = true}) async {
+    if (!mounted || _completed || _busy || _controller == null) return;
     setState(() {
       _busy = true;
       _error = null;
     });
+    final navigation = _navigationVersion;
     try {
       final url = await _controller!.getUrl();
-      if (url == null || !widget.repository.isAnnaUrl(url.uriValue)) {
+      if (url == null ||
+          !widget.repository.isAnnaUrl(url.uriValue) ||
+          url.uriValue.path != '/search') {
         throw const StoreRepositoryException(
           'Open an Anna’s Archive search page first.',
         );
@@ -71,10 +93,15 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
         throw const StoreRepositoryException('This page is still loading.');
       }
       final result = BookSearchProviders.parseAnna(body, url.uriValue, 1);
+      if (!mounted || navigation != _navigationVersion) return;
       await _registerSession(url.uriValue);
-      if (mounted) Navigator.pop(context, AnnaBrowserResult(search: result));
+      if (mounted && navigation == _navigationVersion) {
+        _completed = true;
+        _pageWatcher?.cancel();
+        Navigator.pop(context, AnnaBrowserResult(search: result));
+      }
     } catch (e) {
-      if (mounted) {
+      if (mounted && reportError) {
         setState(
           () => _error = e is StoreRepositoryException
               ? '${e.message} Complete the site’s check or try another mirror.'
@@ -82,12 +109,81 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _releaseBusy();
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _resumeBook() async {
+    if (!mounted || _completed || _busy || _controller == null) return;
+    _busy = true;
+    final navigation = _navigationVersion;
+    try {
+      final url = await _controller!.getUrl();
+      if (url == null || !BookSearchProviders.isHttpUrl(url.toString())) return;
+      final body = await _controller!.evaluateJavascript(
+        source: 'document.documentElement.outerHTML',
+      );
+      if (body is! String ||
+          BookSearchProviders.requiresBrowserVerification(body)) {
+        return;
+      }
+      final links = BookDownloadService.extractDownloadLinks(
+        body,
+        url.uriValue,
+      );
+      if (links.isEmpty || !mounted || navigation != _navigationVersion) return;
+      await _registerSession(url.uriValue);
+      await _registerSession(Uri.parse(links.first));
+      final book = widget.book!;
+      if (!mounted || navigation != _navigationVersion) return;
+      _completed = true;
+      _pageWatcher?.cancel();
+      Navigator.pop(
+        context,
+        AnnaBrowserResult(
+          download: UnifiedBook(
+            title: book.title,
+            author: book.author,
+            md5: book.md5,
+            extension: book.extension,
+            source: book.source,
+            coverUrl: book.coverUrl,
+            fileSize: book.fileSize,
+            year: book.year,
+            language: book.language,
+            detailUrl: book.detailUrl,
+            downloadUrl: links.first,
+            alternateUrls: links.skip(1).toList(),
+          ),
+        ),
+      );
+    } catch (_) {
+      // Navigation can replace the document while it is being sampled.
+      // Keep the verification view usable and retry the new document.
+    } finally {
+      _releaseBusy();
+    }
+  }
+
+  void _readPage() {
+    if (widget.book == null) {
+      _useResults(reportError: false);
+    } else {
+      _resumeBook();
     }
   }
 
   Future<void> _download(DownloadStartRequest request) async {
-    if (_busy || !BookSearchProviders.isHttpUrl(request.url.toString())) return;
+    if (!mounted ||
+        _completed ||
+        !BookSearchProviders.isHttpUrl(request.url.toString())) {
+      return;
+    }
+    if (_busy) {
+      _pendingDownload = request;
+      return;
+    }
     setState(() => _busy = true);
     try {
       await _registerSession(request.url.uriValue);
@@ -115,10 +211,15 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
         extension: extension,
         source: BookSource.annasArchive,
         coverUrl: book?.coverUrl,
+        fileSize: book?.fileSize,
+        year: book?.year,
+        language: book?.language,
         detailUrl: book?.detailUrl,
         downloadUrl: request.url.toString(),
       );
       if (mounted) {
+        _completed = true;
+        _pageWatcher?.cancel();
         Navigator.pop(context, AnnaBrowserResult(download: download));
       }
     } catch (e) {
@@ -130,7 +231,8 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _releaseBusy();
+      if (mounted) setState(() {});
     }
   }
 
@@ -173,8 +275,8 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
           padding: const EdgeInsets.all(12),
           child: Text(
             widget.book == null
-                ? 'Complete any verification, then use the search results or select an EPUB/PDF download.'
-                : 'Complete the site’s verification and select a download link to add this book to your library.',
+                ? 'Complete the site’s verification. Search results will appear in the Store automatically.'
+                : 'Complete the site’s verification or wait for its download timer. The app will continue the download automatically.',
           ),
         ),
         if (_error != null)
@@ -193,7 +295,15 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
               useOnDownloadStart: true,
               useShouldOverrideUrlLoading: true,
             ),
-            onWebViewCreated: (controller) => _controller = controller,
+            onWebViewCreated: (controller) {
+              _controller = controller;
+              _pageWatcher = Timer.periodic(
+                const Duration(milliseconds: 750),
+                (_) => _readPage(),
+              );
+            },
+            onLoadStart: (_, __) => _navigationVersion++,
+            onLoadStop: (_, __) => _readPage(),
             onProgressChanged: (_, progress) {
               if (mounted) setState(() => _progress = progress);
             },

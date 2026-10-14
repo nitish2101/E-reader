@@ -86,6 +86,53 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test(
+    'download verification is consumed once and a blocked resume does not reopen it',
+    () async {
+      final url = Uri.parse('https://annas-archive.pk/slow_download/dune');
+      bloc.add(const DownloadBook(dune));
+      await settle();
+      repository.transfer.completeError(BrowserVerificationRequired(url));
+      await settle();
+      final request = bloc.state.verificationRequests.single;
+      expect(request.book.id, 'dune');
+      expect(request.url, url);
+      expect(bloc.state.downloads, isEmpty);
+      bloc.add(ConsumeDownloadVerification(request));
+      bloc.add(const DownloadBook(dune, allowBrowserVerification: false));
+      await settle();
+      expect(bloc.state.verificationRequests, isEmpty);
+      expect(bloc.state.noticeIsError, isTrue);
+      expect(bloc.state.notice, contains('verification'));
+      expect(bloc.state.downloadedIds, isEmpty);
+    },
+  );
+
+  test(
+    'verified results preserve pagination and other source warnings',
+    () async {
+      bloc.add(const SearchBooks('Pride'));
+      await settle();
+      repository.requests['Pride:1']!.complete(
+        const StoreSearchResult(
+          books: [pride],
+          warnings: ["Anna's Archive: blocked", 'LibGen: unavailable'],
+        ),
+      );
+      await settle();
+      bloc.add(
+        const UseBrowserResults(
+          'Pride',
+          StoreSearchResult(books: [dune], hasMore: true),
+        ),
+      );
+      await settle();
+      expect(bloc.state.books.map((b) => b.id), [pride.id, 'dune']);
+      expect(bloc.state.hasMore, isTrue);
+      expect(bloc.state.warnings, ['LibGen: unavailable']);
+    },
+  );
+
   test('slow older response cannot overwrite newer search', () async {
     bloc.add(const SearchBooks('old'));
     await settle();

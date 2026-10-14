@@ -66,3 +66,15 @@ class StoreRepositoryException implements Exception {
   @override
   String toString() => message;
 }
+
+class BrowserVerificationRequired extends StoreRepositoryException {
+  final Uri url;
+  const BrowserVerificationRequired(this.url)
+    : super('The download source requires browser verification.');
+}
+
+class DownloadVerification {
+  final UnifiedBook book;
+  final Uri url;
+  const DownloadVerification(this.book, this.url);
+}

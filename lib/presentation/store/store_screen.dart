@@ -39,6 +39,8 @@ class _StoreContent extends StatefulWidget {
 class _StoreContentState extends State<_StoreContent> {
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
+  bool _browserOpen = false;
+  int _lastNoticeVersion = 0;
 
   @override
   void dispose() {
@@ -58,7 +60,13 @@ class _StoreContentState extends State<_StoreContent> {
     }
   }
 
-  Future<void> _openAnna(StoreState state, {UnifiedBook? book}) async {
+  Future<void> _openAnna(
+    StoreState state, {
+    UnifiedBook? book,
+    Uri? verificationUrl,
+  }) async {
+    if (_browserOpen) return;
+    _browserOpen = true;
     final repository = context.read<StoreRepository>();
     final query = state.query;
     final result = await Navigator.push<AnnaBrowserResult>(
@@ -66,20 +74,39 @@ class _StoreContentState extends State<_StoreContent> {
       MaterialPageRoute(
         builder: (_) => AnnaBrowserScreen(
           repository: repository,
-          initialUrl: book?.detailUrl != null
-              ? Uri.parse(book!.detailUrl!)
-              : repository.annaSearchUrl(query, state.formats),
+          initialUrl:
+              verificationUrl ??
+              (book?.detailUrl != null
+                  ? Uri.parse(book!.detailUrl!)
+                  : repository.annaSearchUrl(query, state.formats)),
           book: book,
         ),
       ),
     );
-    if (!mounted || result == null) return;
-    if (result.search != null) {
-      context.read<StoreBloc>().add(UseBrowserResults(query, result.search!));
+    _browserOpen = false;
+    if (!mounted) return;
+    if (result?.search != null) {
+      context.read<StoreBloc>().add(UseBrowserResults(query, result!.search!));
     }
-    if (result.download != null) {
-      context.read<StoreBloc>().add(DownloadBook(result.download!));
+    if (result?.download != null) {
+      context.read<StoreBloc>().add(
+        DownloadBook(result!.download!, allowBrowserVerification: false),
+      );
     }
+    _resumeVerification();
+  }
+
+  Future<void> _resumeVerification() async {
+    if (!mounted || _browserOpen) return;
+    final bloc = context.read<StoreBloc>();
+    if (bloc.state.verificationRequests.isEmpty) return;
+    final request = bloc.state.verificationRequests.first;
+    bloc.add(ConsumeDownloadVerification(request));
+    await _openAnna(
+      bloc.state,
+      book: request.book,
+      verificationUrl: request.url,
+    );
   }
 
   @override
@@ -87,8 +114,14 @@ class _StoreContentState extends State<_StoreContent> {
     appBar: AppBar(title: const Text('Book Store')),
     body: BlocConsumer<StoreBloc, StoreState>(
       listenWhen: (previous, current) =>
-          previous.noticeVersion != current.noticeVersion,
+          previous.noticeVersion != current.noticeVersion ||
+          previous.verificationRequests != current.verificationRequests,
       listener: (context, state) {
+        _resumeVerification();
+        if (state.notice == null || state.noticeVersion == _lastNoticeVersion) {
+          return;
+        }
+        _lastNoticeVersion = state.noticeVersion;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(state.notice!),
@@ -340,8 +373,6 @@ class _StoreContentState extends State<_StoreContent> {
                     onDownload: () {
                       if (state.downloadedIds.contains(book.id)) {
                         context.go('/');
-                      } else if (book.source == BookSource.annasArchive) {
-                        _openAnna(state, book: book);
                       } else {
                         context.read<StoreBloc>().add(DownloadBook(book));
                       }
