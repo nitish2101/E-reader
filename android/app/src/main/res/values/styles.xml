@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is off -->
-    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+    <!-- Keep startup dark regardless of the device appearance setting. -->
+    <style name="LaunchTheme" parent="@android:style/Theme.NoTitleBar">
         <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">@color/paper_ink_canvas</item>
+        <item name="android:navigationBarColor">@color/paper_ink_canvas</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
     
     <!-- Theme applied to the Android Window as soon as Flutter renders its first frame -->
-    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+    <style name="NormalTheme" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowBackground">@color/paper_ink_canvas</item>
     </style>
 </resources>
