@@ -52,6 +52,10 @@ class BookModel extends HiveObject {
   @HiveField(15)
   final String? storeBookId;
 
+  /// Versioned EPUB checkpoint; persisted atomically with legacy progress fields.
+  @HiveField(16)
+  Map<String, dynamic>? epubCheckpoint;
+
   BookModel({
     required this.id,
     required this.title,
@@ -69,6 +73,7 @@ class BookModel extends HiveObject {
     this.md5,
     this.fileSize,
     this.storeBookId,
+    this.epubCheckpoint,
   }) : lastReadTime = lastReadTime ?? DateTime.now(),
        addedTime = addedTime ?? DateTime.now();
 
@@ -100,6 +105,7 @@ class BookModel extends HiveObject {
     String? md5,
     int? fileSize,
     String? storeBookId,
+    Map<String, dynamic>? epubCheckpoint,
   }) {
     return BookModel(
       id: id ?? this.id,
@@ -118,6 +124,7 @@ class BookModel extends HiveObject {
       md5: md5 ?? this.md5,
       fileSize: fileSize ?? this.fileSize,
       storeBookId: storeBookId ?? this.storeBookId,
+      epubCheckpoint: epubCheckpoint ?? this.epubCheckpoint,
     );
   }
 }

@@ -27,7 +27,9 @@ dependencies:
 
   file_picker: ^10.3.10
   pdfrx: ^2.2.24
-  flutter_epub_viewer: ^1.0.5
+  # Locked 1.2.8 engine with scoped lifecycle fixes (see third_party README).
+  flutter_epub_viewer:
+    path: third_party/flutter_epub_viewer
   flutter_inappwebview: ^6.1.5
   dio: ^5.4.0
   path_provider: ^2.1.2
@@ -55,5 +57,11 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.4
 
   flutter_inappwebview_platform_interface: ^1.3.0+1
+# Native disposal in 1.1.3 reloads a dead WebView into a replacement renderer.
+# Keep a scoped patch until this lifecycle fix is available upstream.
+dependency_overrides:
+  flutter_inappwebview_android:
+    path: third_party/flutter_inappwebview_android
+
 flutter:
   uses-material-design: true

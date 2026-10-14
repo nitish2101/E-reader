@@ -41,7 +41,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.ereader.app"
+        applicationId (System.getenv("READER_VERIFICATION_APPLICATION_ID") ?: "com.ereader.app")
         minSdk 26
         targetSdk 34
         versionCode flutterVersionCode.toInteger()

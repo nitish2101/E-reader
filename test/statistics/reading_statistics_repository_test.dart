@@ -158,4 +158,28 @@ void main() {
       reopened.dispose();
     },
   );
+
+  test(
+    'omitted corrupt history stays visible after initialization and write recovery',
+    () async {
+      await disk.box.put('session:corrupt', {'intervals': 'invalid'});
+      repository.dispose();
+      repository = ReadingStatisticsRepository(disk);
+      final readWarning = repository.saveError;
+      expect(readWarning, isNotNull);
+      await repository.initialize();
+      expect(repository.saveError, readWarning);
+      repository.record(snapshot(15));
+      disk.failWrite = true;
+      await expectLater(
+        repository.flush(),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(repository.saveError, isNot(readWarning));
+      disk.failWrite = false;
+      await repository.flush();
+      expect(repository.saveError, readWarning);
+      expect(repository.total.inSeconds, 15);
+    },
+  );
 }

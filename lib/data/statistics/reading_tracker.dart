@@ -15,6 +15,7 @@ class ReadingTracker {
   ReadingLease? _owner;
   bool _active = false;
   bool _disposed = false;
+  late bool _storageAvailable;
   Duration? _anchor;
   Duration? _cursor;
   Duration? _lastInteraction;
@@ -27,6 +28,8 @@ class ReadingTracker {
     Duration Function()? elapsed,
   }) : now = now ?? DateTime.now {
     this.elapsed = elapsed ?? () => _stopwatch.elapsed;
+    _storageAvailable = repository.isAvailable;
+    repository.changes.addListener(_repositoryChanged);
     _timer = Timer.periodic(const Duration(seconds: 15), (_) => checkpoint());
   }
   ReadingLease open(String bookId) {
@@ -116,14 +119,29 @@ class ReadingTracker {
   }
 
   void _setActive(ReadingLease lease, bool value) {
-    if (_disposed ||
-        !identical(lease, _owner) ||
-        lease._closed ||
-        _active == value) {
-      return;
-    }
-    if (value && !repository.isAvailable) return;
-    if (value) {
+    if (_disposed || !identical(lease, _owner) || lease._closed) return;
+    lease._requestedActive = value;
+    _syncEligibility();
+  }
+
+  void _repositoryChanged() {
+    // Session writes also notify. Only availability transitions affect the
+    // clock, so checkpoints cannot restart sessions or recursively record time.
+    final available = repository.isAvailable;
+    if (_disposed || available == _storageAvailable) return;
+    _storageAvailable = available;
+    _syncEligibility();
+  }
+
+  void _syncEligibility() {
+    final lease = _owner;
+    final eligible =
+        lease != null &&
+        !lease._closed &&
+        lease._requestedActive &&
+        repository.isAvailable;
+    if (_active == eligible) return;
+    if (eligible) {
       _active = true;
       _begin();
     } else {
@@ -149,6 +167,7 @@ class ReadingTracker {
 
   void dispose() {
     if (_disposed) return;
+    repository.changes.removeListener(_repositoryChanged);
     _stop();
     _disposed = true;
     _timer?.cancel();
@@ -160,6 +179,7 @@ class ReadingLease {
   final ReadingTracker _tracker;
   final String bookId;
   bool _closed = false;
+  bool _requestedActive = false;
   ReadingLease._(this._tracker, this.bookId);
   void setActive(bool active) => _tracker._setActive(this, active);
   void interact() => _tracker._interact(this);

@@ -42,6 +42,13 @@ class ReaderActivityController extends ChangeNotifier {
     }
   }
 
+  void cancelNavigation() {
+    _navigationVersion++;
+    if (!_navigating) return;
+    _navigating = false;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     _disposed = true;

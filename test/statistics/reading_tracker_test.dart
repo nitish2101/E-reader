@@ -176,4 +176,53 @@ void main() {
     reader.close();
     expect(total(), 300);
   });
+
+  test(
+    'recovered storage starts an eligible lease without counting the outage',
+    () async {
+      tracker.dispose();
+      await repository.flush();
+      repository.dispose();
+      repository = ReadingStatisticsRepository.unavailable();
+      tracker = ReadingTracker(
+        repository,
+        now: () => wall,
+        elapsed: () => elapsed,
+      );
+      final reader = tracker.open('a')..setActive(true);
+      advance(const Duration(minutes: 2));
+      await repository.flush();
+      reader.interact();
+      advance(const Duration(seconds: 30));
+      reader.close();
+      expect(total(), 30);
+      expect(
+        repository.sessions.single.start,
+        DateTime(2026, 10, 12, 12, 2).toUtc(),
+      );
+    },
+  );
+  test('recovery cannot activate a lease hidden during the outage', () async {
+    tracker.dispose();
+    await repository.flush();
+    repository.dispose();
+    repository = ReadingStatisticsRepository.unavailable();
+    tracker = ReadingTracker(
+      repository,
+      now: () => wall,
+      elapsed: () => elapsed,
+    );
+    final reader = tracker.open('a')..setActive(true);
+    reader.setActive(false);
+    advance(const Duration(minutes: 2));
+    await repository.flush();
+    reader.interact();
+    advance(const Duration(seconds: 30));
+    tracker.checkpoint();
+    expect(total(), 0);
+    reader.setActive(true);
+    advance(const Duration(seconds: 10));
+    reader.close();
+    expect(total(), 10);
+  });
 }

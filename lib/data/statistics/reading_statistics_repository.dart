@@ -12,7 +12,9 @@ class ReadingStatisticsRepository {
   Future<void> _writes = Future.value();
   bool _disposed = false;
   bool _initializationFailed = false;
-  String? saveError;
+  String? _writeError;
+  String? _readWarning;
+  String? get saveError => _writeError ?? _readWarning;
   ReadingStatisticsRepository(Box box) : _box = box {
     _readSessions(box);
   }
@@ -26,13 +28,13 @@ class ReadingStatisticsRepository {
           _sessions.putIfAbsent(session.id, () => session);
         }
       } catch (_) {
-        saveError = 'Some recorded sessions could not be read.';
+        _readWarning = 'Some recorded sessions could not be read.';
       }
     }
   }
 
   ReadingStatisticsRepository.unavailable() {
-    saveError =
+    _writeError =
         'Reading statistics storage is unavailable. Your library is still accessible.';
   }
   bool get isAvailable => _box != null;
@@ -59,10 +61,10 @@ class ReadingStatisticsRepository {
         );
       }
       _initializationFailed = false;
-      saveError = null;
+      _writeError = null;
     } catch (error) {
       _initializationFailed = true;
-      saveError =
+      _writeError =
           'Reading statistics storage is unavailable. Your library is still accessible.';
       debugPrint('Statistics initialization failed: $error');
     }
@@ -106,13 +108,13 @@ class ReadingStatisticsRepository {
           }
         }
         await _box!.flush();
-        saveError = null;
+        _writeError = null;
       } catch (_) {
         // Keep every snapshot retryable, including a failed disk flush.
         for (final entry in snapshots.entries) {
           _pending.putIfAbsent(entry.key, () => entry.value);
         }
-        saveError =
+        _writeError =
             'Reading time could not be saved. Keep the app open and retry.';
         rethrow;
       } finally {

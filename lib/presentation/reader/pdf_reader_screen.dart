@@ -17,11 +17,17 @@ class PdfReaderScreen extends StatefulWidget {
   State<PdfReaderScreen> createState() => _PdfReaderScreenState();
 }
 
-class _PdfReaderScreenState extends State<PdfReaderScreen> {
+class _PdfReaderScreenState extends State<PdfReaderScreen>
+    with WidgetsBindingObserver {
   final _readingActivity = ReaderActivityController();
   late final ReaderBloc _readerBloc;
   PdfViewerController? _controller;
   Timer? _autoSaveTimer;
+  Timer? _openingTimer;
+  bool _openingStalled = false;
+  int _viewerGeneration = 0;
+  bool _allowPop = false;
+  bool _closing = false;
   bool _showControls = true;
   bool _isInitializing = true;
   int _currentPage = 1;
@@ -31,6 +37,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startOpeningTimer();
     _readerBloc = ReaderBloc(bookRepository: context.read<BookRepository>())
       ..add(LoadBook(widget.bookId));
     // Hide system UI for immersive reading
@@ -38,12 +46,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
     // Auto-save every 5 seconds
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      _readerBloc.add(SaveProgress());
+      unawaited(_checkpoint());
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _openingTimer?.cancel();
     // Save progress before closing
     unawaited(_readerBloc.close());
 
@@ -55,6 +65,78 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      unawaited(_checkpoint());
+    }
+  }
+
+  Future<void> _checkpoint() async {
+    if (_isInitializing || _totalPages == 0) return;
+    try {
+      final page = _controller?.isReady == true
+          ? _controller!.pageNumber ?? _currentPage
+          : _currentPage;
+      await _readerBloc.checkpointPdf(page, _totalPages);
+    } catch (error) {
+      debugPrint('Failed to checkpoint PDF: $error');
+    }
+  }
+
+  Future<void> _closeReader() async {
+    if (_closing) return;
+    _closing = true;
+    _readingActivity.setLoaded(false);
+    _autoSaveTimer?.cancel();
+    await _checkpoint();
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) Navigator.pop(context);
+  }
+
+  void _startOpeningTimer() {
+    _openingTimer?.cancel();
+    _openingTimer = Timer(const Duration(seconds: 15), () {
+      if (mounted && _isInitializing) setState(() => _openingStalled = true);
+    });
+  }
+
+  Future<void> _retryViewer() async {
+    _readingActivity.setLoaded(false);
+    _readingActivity.setBlocked(false);
+    _readingActivity.cancelNavigation();
+    await _checkpoint();
+    if (!mounted) return;
+    setState(() {
+      _viewerGeneration++;
+      _controller = null;
+      _isInitializing = true;
+      _openingStalled = false;
+    });
+    _readerBloc.add(LoadBook(widget.bookId));
+    _startOpeningTimer();
+  }
+
+  Widget _recoveryControls(String message) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(message, textAlign: TextAlign.center),
+          FilledButton(onPressed: _retryViewer, child: const Text('Retry')),
+          TextButton(
+            onPressed: _closeReader,
+            child: const Text('Return to library'),
+          ),
+        ],
+      ),
+    ),
+  );
+
   void _toggleControls() {
     setState(() {
       _showControls = !_showControls;
@@ -63,36 +145,37 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider.value(
-      value: _readerBloc,
-      child: ReaderActivityScope(
-        bookId: widget.bookId,
-        controller: _readingActivity,
+    return ReaderActivityScope(
+      bookId: widget.bookId,
+      controller: _readingActivity,
+      child: _buildReader(context),
+    );
+  }
+
+  Widget _buildReader(BuildContext context) {
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) unawaited(_closeReader());
+      },
+      child: BlocProvider.value(
+        value: _readerBloc,
         child: BlocBuilder<ReaderBloc, ReaderState>(
           builder: (context, state) {
             if (state is ReaderLoading) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
+              return Scaffold(
+                body: _openingStalled
+                    ? _recoveryControls(
+                        'This book is taking longer to open. Loading continues.',
+                      )
+                    : const Center(child: CircularProgressIndicator()),
               );
             }
 
             if (state is ReaderError) {
               return Scaffold(
                 appBar: AppBar(),
-                body: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.error_outline,
-                        size: 64,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(state.message),
-                    ],
-                  ),
-                ),
+                body: _recoveryControls(state.message),
               );
             }
 
@@ -109,6 +192,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                   children: [
                     // PDF viewer - handles all scroll gestures naturally
                     _buildPdfViewer(context, book.localPath, initialPage),
+                    if (_openingStalled && _isInitializing)
+                      _recoveryControls(
+                        'This book is taking longer to open. Loading continues.',
+                      ),
                     // Top bar
                     _buildTopBar(context, book.title),
                     // Bottom bar
@@ -145,11 +232,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     String filePath,
     int initialPage,
   ) {
+    final generation = _viewerGeneration;
     final viewer = PdfViewer.file(
       filePath,
+      key: ValueKey(generation),
       controller: _controller,
       params: PdfViewerParams(
         panEnabled: true,
+        errorBannerBuilder: (context, error, stack, document) =>
+            _recoveryControls('Could not open this PDF. $error'),
         // Enable smooth vertical continuous scrolling
         layoutPages: (pages, params) {
           final height = pages.fold(
@@ -178,6 +269,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
             ? Colors.white
             : Theme.of(context).scaffoldBackgroundColor,
         onViewerReady: (document, controller) async {
+          if (!mounted || generation != _viewerGeneration) return;
           _controller = controller;
           _totalPages = document.pages.length;
 
@@ -186,28 +278,32 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
             await controller.goToPage(pageNumber: initialPage);
           }
 
-          if (!mounted) return;
+          if (!mounted || generation != _viewerGeneration || _closing) return;
+          _openingTimer?.cancel();
+          _openingStalled = false;
+          _currentPage =
+              controller.pageNumber ?? initialPage.clamp(1, _totalPages);
           _isInitializing = false;
           _readingActivity.setLoaded(true);
+          _readerBloc.confirmPdfPosition(_currentPage, _totalPages);
 
           if (mounted) setState(() {});
         },
         onDocumentChanged: (document) {
-          if (mounted && document == null) _readingActivity.setLoaded(false);
+          if (mounted && generation == _viewerGeneration && document == null) {
+            _readingActivity.setLoaded(false);
+          }
         },
         onPageChanged: (pageNumber) {
-          if (_isInitializing || !mounted) return;
+          if (_isInitializing || !mounted || generation != _viewerGeneration) {
+            return;
+          }
 
           setState(() {
             _currentPage = pageNumber ?? 1;
           });
 
-          _readerBloc.add(
-            UpdatePdfProgress(
-              currentPage: _currentPage,
-              totalPages: _totalPages,
-            ),
-          );
+          _readerBloc.confirmPdfPosition(_currentPage, _totalPages);
         },
       ),
     );
@@ -273,7 +369,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                     children: [
                       IconButton(
                         icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: _closeReader,
                       ),
                       Expanded(
                         child: Text(
@@ -305,6 +401,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   }
 
   Widget _buildBottomBar(BuildContext context) {
+    final generation = _viewerGeneration;
     final progress = _totalPages > 0 ? _currentPage / _totalPages : 0.0;
 
     return Positioned(
@@ -333,13 +430,27 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       // Page slider
-                      if (_totalPages > 0)
+                      if (_totalPages > 1)
                         Slider(
                           value: _currentPage.toDouble(),
                           min: 1,
                           max: _totalPages.toDouble(),
+                          onChangeStart: (_) {
+                            if (generation == _viewerGeneration &&
+                                !_isInitializing) {
+                              _readingActivity.setBlocked(true);
+                            }
+                          },
                           onChanged: (value) {
-                            unawaited(_seekPage(value.toInt()));
+                            if (generation == _viewerGeneration &&
+                                !_isInitializing) {
+                              unawaited(_seekPage(value.toInt()));
+                            }
+                          },
+                          onChangeEnd: (_) {
+                            if (generation == _viewerGeneration) {
+                              _readingActivity.setBlocked(false);
+                            }
                           },
                         ),
                       // Page indicator

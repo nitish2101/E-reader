@@ -136,6 +136,26 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
     }
   }
 
+  // Native page callbacks update this synchronously so close/background cannot
+  // race an UpdatePdfProgress event that is still queued in the bloc.
+  void confirmPdfPosition(int page, int total) {
+    if (_currentBook == null || page < 1 || total < 1) return;
+    _currentPage = page.clamp(1, total);
+    _totalPages = total;
+    _progress = _currentPage / total;
+  }
+
+  Future<void> checkpointPdf(int page, int total) async {
+    confirmPdfPosition(page, total);
+    if (_currentBook == null || total < 1) return;
+    await bookRepository.updateReadingProgress(
+      bookId: _currentBook!.id,
+      page: _currentPage,
+      progress: _progress,
+      totalPages: _totalPages,
+    );
+  }
+
   @override
   Future<void> close() async {
     // Save progress when closing
