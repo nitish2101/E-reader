@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme/app_theme.dart';
-import 'core/theme/theme_cubit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'core/services/cache_config.dart';
@@ -95,11 +94,6 @@ class _EReaderAppState extends State<EReaderApp> {
             create: (context) =>
                 LibraryBloc(bookRepository: context.read<BookRepository>())
                   ..add(LoadLibrary()),
-          ),
-          BlocProvider<ThemeCubit>(
-            create: (context) => ThemeCubit(
-              settingsRepository: context.read<SettingsRepository>(),
-            ),
           ),
         ],
         child: MaterialApp.router(
