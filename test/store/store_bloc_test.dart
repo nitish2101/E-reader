@@ -40,6 +40,7 @@ class PendingSearch extends StoreRepository {
     required UnifiedBook book,
     required CancelToken cancelToken,
     required void Function(double) onProgress,
+    Set<Uri> verifiedPages = const {},
   }) {
     downloadCount++;
     progress = onProgress;
@@ -132,6 +133,30 @@ void main() {
       expect(bloc.state.warnings, ['LibGen: unavailable']);
     },
   );
+  for (final exhausted in [false, true]) {
+    test(
+      exhausted
+          ? 'three verified partners stop automatic browser retries'
+          : 'an already verified page cannot reopen with a different query',
+      () async {
+        const base = 'https://annas-archive.gl/slow_download/dune/0/';
+        final pages = {
+          Uri.parse('${base}0?verified=1'),
+          if (exhausted) Uri.parse('${base}1'),
+          if (exhausted) Uri.parse('${base}2'),
+        };
+        bloc.add(DownloadBook(dune, verifiedPages: pages));
+        await settle();
+        repository.transfer.completeError(
+          BrowserVerificationRequired(Uri.parse('$base${exhausted ? 3 : 0}')),
+        );
+        await settle();
+        expect(bloc.state.verificationRequests, isEmpty);
+        expect(bloc.state.noticeIsError, isTrue);
+        expect(bloc.state.downloads, isEmpty);
+      },
+    );
+  }
 
   test('slow older response cannot overwrite newer search', () async {
     bloc.add(const SearchBooks('old'));

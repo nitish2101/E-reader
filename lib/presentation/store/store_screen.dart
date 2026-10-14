@@ -127,6 +127,7 @@ class _StoreContentState extends State<_StoreContent> {
     StoreState state, {
     UnifiedBook? book,
     Uri? verificationUrl,
+    Set<Uri> verifiedPages = const {},
   }) async {
     if (!mounted || !_active || _browserOpen) return;
     final repository = context.read<StoreRepository>();
@@ -160,7 +161,13 @@ class _StoreContentState extends State<_StoreContent> {
       final download = result!.download!;
       _downloadBooks[download.id] = download;
       context.read<StoreBloc>().add(
-        DownloadBook(download, allowBrowserVerification: false),
+        DownloadBook(
+          download,
+          verifiedPages: {
+            ...verifiedPages,
+            if (result.verifiedPage != null) result.verifiedPage!,
+          },
+        ),
       );
     }
     _resumeVerification();
@@ -176,6 +183,7 @@ class _StoreContentState extends State<_StoreContent> {
       bloc.state,
       book: request.book,
       verificationUrl: request.url,
+      verifiedPages: request.verifiedPages,
     );
   }
 

@@ -76,5 +76,10 @@ class BrowserVerificationRequired extends StoreRepositoryException {
 class DownloadVerification {
   final UnifiedBook book;
   final Uri url;
-  const DownloadVerification(this.book, this.url);
+  final Set<Uri> verifiedPages;
+  const DownloadVerification(
+    this.book,
+    this.url, {
+    this.verifiedPages = const {},
+  });
 }

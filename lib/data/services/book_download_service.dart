@@ -18,8 +18,9 @@ class BookDownloadService {
   Future<String> download(
     UnifiedBook book,
     CancelToken token,
-    void Function(double) onProgress,
-  ) async {
+    void Function(double) onProgress, {
+    Set<Uri> verifiedPages = const {},
+  }) async {
     if (!book.isSupported) {
       throw const StoreRepositoryException(
         'Only PDF and EPUB books can be downloaded.',
@@ -54,6 +55,9 @@ class BookDownloadService {
     final visited = <String>{};
     String reason = 'No usable download link was provided.';
     Uri? verificationUrl;
+    bool needsVerification(Uri url) => !verifiedPages.any(
+      (page) => page.origin == url.origin && page.path == url.path,
+    );
     final timer = Timer(
       const Duration(minutes: 3),
       () => token.cancel(
@@ -95,6 +99,13 @@ class BookDownloadService {
           );
           final body = response.data;
           if (body == null) continue;
+          // A free partner can redirect through every server while its browser
+          // check is pending. Retain the first partner page if none yields a file.
+          if (book.source == BookSource.annasArchive &&
+              response.realUri.path.startsWith('/slow_download/') &&
+              needsVerification(response.realUri)) {
+            verificationUrl ??= response.realUri;
+          }
           if ([301, 302, 303, 307, 308].contains(response.statusCode)) {
             await body.stream.drain<void>();
             final location = response.headers.value('location');
@@ -135,7 +146,9 @@ class BookDownloadService {
             final page = utf8.decode(bytes, allowMalformed: true);
             if (book.source == BookSource.annasArchive &&
                 BookSearchProviders.requiresBrowserVerification(page)) {
-              verificationUrl ??= response.realUri;
+              if (needsVerification(response.realUri)) {
+                verificationUrl ??= response.realUri;
+              }
               continue;
             }
             final links = extractDownloadLinks(page, response.realUri);
@@ -151,7 +164,8 @@ class BookDownloadService {
             // countdown. Let the user see that page only when HTTP cannot proceed.
             if (book.source == BookSource.annasArchive &&
                 links.isEmpty &&
-                response.realUri.path.startsWith('/slow_download/')) {
+                response.realUri.path.startsWith('/slow_download/') &&
+                needsVerification(response.realUri)) {
               verificationUrl ??= response.realUri;
             }
             reason =
@@ -190,7 +204,9 @@ class BookDownloadService {
         } on DioException catch (error) {
           if (CancelToken.isCancel(error)) rethrow;
           final status = error.response?.statusCode;
-          if (book.source == BookSource.annasArchive && status == 403) {
+          if (book.source == BookSource.annasArchive &&
+              status == 403 &&
+              needsVerification(Uri.parse(candidate.url))) {
             verificationUrl ??= Uri.parse(candidate.url);
           }
           final transient =
@@ -229,6 +245,25 @@ class BookDownloadService {
   static List<String> extractDownloadLinks(String body, Uri base) {
     final document = html.parse(body);
     final links = <String>{};
+    // Some free partners deliberately provide copyable text instead of an
+    // anchor. Read the displayed URL; never execute the clipboard handler.
+    if (base.path.startsWith('/slow_download/')) {
+      for (final button in document.querySelectorAll('button[onclick]')) {
+        if (!(button.attributes['onclick'] ?? '').contains(
+          'navigator.clipboard.writeText',
+        )) {
+          continue;
+        }
+        final target = button.nextElementSibling?.text.trim();
+        final uri = target == null ? null : Uri.tryParse(target);
+        if (uri != null &&
+            BookSearchProviders.isHttpUrl(uri.toString()) &&
+            (uri.path.toLowerCase().endsWith('.epub') ||
+                uri.path.toLowerCase().endsWith('.pdf'))) {
+          links.add(uri.toString());
+        }
+      }
+    }
     // Some public catalogs use an immediate HTML refresh to start the transfer.
     // Follow only same-origin book files, within the existing depth/URL limits.
     for (final meta in document.querySelectorAll('meta[http-equiv]')) {
@@ -254,9 +289,11 @@ class BookDownloadService {
       }
     }
     for (final link in document.querySelectorAll('a[href]')) {
-      final href = link.attributes['href']!;
+      final href = link.attributes['href']!.trim();
+      if (href.isEmpty || href.startsWith('#')) continue;
       final text = link.text.trim().toLowerCase();
       final uri = base.resolve(href);
+      if (uri.replace(fragment: '') == base.replace(fragment: '')) continue;
       final path = uri.path.toLowerCase();
       // Pick actual download controls, never every navigation link on a page.
       if (text == 'get' ||

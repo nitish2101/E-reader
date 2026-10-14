@@ -87,3 +87,55 @@ No new tests or dependencies were added for this merge.
 The native evidence above belongs to the earlier Store build; the combined UI
 was reviewed in source and checked with the existing tests, without repeating
 the native/live provider journeys.
+
+## Live Anna download check — 2026-10-15
+
+Tested the user's reported EPUB, **Project Hail Mary : a novel** by Weir, Andy,
+against the real Anna deployment on the same Android 16 / API 36 tablet emulator.
+The user completed the source's search and download verification checks manually.
+No CAPTCHA was automated, and no certificate check was disabled.
+
+The live check exposed and reproduced these failures before fixes:
+
+- Partner redirects exhausted the resolver's URL budget without asking for the
+  actual slow-download page's browser check.
+- Empty and fragment-only Save/Read more anchors were mistaken for downloads on
+  slow-download pages, causing the browser to return before the timer finished.
+- Another partner supplied its file URL as copyable text beside a clipboard
+  button, which the link resolver did not recognize.
+- A failed verified partner could not continue to another partner. The flow now
+  remembers verified page paths, selects an untried page, and permits at most
+  three verified pages. A repeated page cannot reopen merely by changing query
+  parameters. A readable detail page follows its slow-download link inside the
+  verification view rather than prematurely returning that page as a file.
+
+On this test network, the first generated HTTPS file host failed certificate
+hostname verification. Anna's alternate partner supplied a reachable file URL.
+The app downloaded it and added the original title/author to Library without
+copying a URL, using an external browser, or manually importing a file.
+
+The final private book file contains **9,810,807 bytes**, and its MD5 is
+`53739932cb4ff9d635edd98f886818a4`, matching the catalog file exactly. The library
+increased from four to five books and retained the existing books/positions.
+There were no `.part` files left after completion. The downloaded book remained
+available after restarting the emulator and installing the final release APK.
+
+Native reader check: the release APK rendered the cover and Chapter 1, and its
+location bridge reported a valid chapter CFI and progress. The software-rendered
+emulator initially loaded slowly and timed out during a chapter jump. Repeating
+with `-gpu host` on the same emulator data and unchanged APK rendered the chapter
+without a recovery overlay or reader errors. This is emulator evidence, not a
+physical-device performance claim. No reader implementation was changed.
+After scrolling, closing normally, and reopening, the reader restored the same
+chapter CFI, progress, and 45.765625-pixel viewport offset. Library showed 0.4%
+for the downloaded book while the existing Pride and Prejudice position stayed
+at 47.6%.
+
+Final checks: 149 Flutter tests passed, three opt-in live tests skipped; static
+analysis reported no issues; the normal release APK built successfully. Six
+focused regressions cover the live resolver failures and bounded verification
+fallback. Diagnostic tracing and browser auto-return pauses were removed.
+
+The release APK uses the repository's existing debug signing configuration; a
+dedicated production signing key is not configured. Signed URLs, cookies, the
+downloaded EPUB, and screenshots containing book text are excluded from commits.

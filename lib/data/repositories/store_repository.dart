@@ -248,7 +248,13 @@ class StoreRepository {
     required UnifiedBook book,
     required CancelToken cancelToken,
     required void Function(double) onProgress,
-  }) => _downloads.download(book, cancelToken, onProgress);
+    Set<Uri> verifiedPages = const {},
+  }) => _downloads.download(
+    book,
+    cancelToken,
+    onProgress,
+    verifiedPages: verifiedPages,
+  );
 
   void clearCache() {
     _cache.clear();

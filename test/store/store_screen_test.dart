@@ -22,6 +22,7 @@ class ScreenCatalog extends StoreRepository {
     required UnifiedBook book,
     required CancelToken cancelToken,
     required void Function(double) onProgress,
+    Set<Uri> verifiedPages = const {},
   }) async {
     throw const StoreRepositoryException('Transfer reached the app downloader');
   }

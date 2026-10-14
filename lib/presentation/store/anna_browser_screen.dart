@@ -8,7 +8,8 @@ import '../../data/services/book_download_service.dart';
 class AnnaBrowserResult {
   final StoreSearchResult? search;
   final UnifiedBook? download;
-  const AnnaBrowserResult({this.search, this.download});
+  final Uri? verifiedPage;
+  const AnnaBrowserResult({this.search, this.download, this.verifiedPage});
 }
 
 /// The user completes the source's own verification in a normal WebView.
@@ -133,6 +134,14 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
         url.uriValue,
       );
       if (links.isEmpty || !mounted || navigation != _navigationVersion) return;
+      final next = Uri.parse(links.first);
+      if (widget.repository.isAnnaUrl(next) &&
+          next.path.startsWith('/slow_download/')) {
+        await _controller!.loadUrl(
+          urlRequest: URLRequest(url: WebUri(next.toString())),
+        );
+        return;
+      }
       await _registerSession(url.uriValue);
       await _registerSession(Uri.parse(links.first));
       final book = widget.book!;
@@ -142,6 +151,7 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
       Navigator.pop(
         context,
         AnnaBrowserResult(
+          verifiedPage: url.uriValue,
           download: UnifiedBook(
             title: book.title,
             author: book.author,
@@ -220,7 +230,13 @@ class _AnnaBrowserScreenState extends State<AnnaBrowserScreen> {
       if (mounted) {
         _completed = true;
         _pageWatcher?.cancel();
-        Navigator.pop(context, AnnaBrowserResult(download: download));
+        Navigator.pop(
+          context,
+          AnnaBrowserResult(
+            download: download,
+            verifiedPage: _url ?? widget.initialUrl,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

@@ -98,6 +98,129 @@ void main() {
     },
   );
   test(
+    'Anna partner redirect loop returns the first page for verification',
+    () async {
+      adapter.respond = (request) {
+        if (request.uri.path.startsWith('/md5/')) {
+          return ResponseBody.fromString(
+            '<a href="/slow_download/abc/0/0">Slow Partner Server #1</a>',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['text/html'],
+            },
+          );
+        }
+        final partner = int.parse(request.uri.pathSegments.last);
+        return ResponseBody.fromString(
+          '',
+          302,
+          headers: {
+            'location': ['/slow_download/abc/0/${partner + 1}'],
+          },
+        );
+      };
+      await expectLater(
+        service.download(
+          const UnifiedBook(
+            title: 'Redirected Anna book',
+            extension: 'epub',
+            source: BookSource.annasArchive,
+            detailUrl: 'https://annas-archive.gl/md5/abc',
+          ),
+          CancelToken(),
+          (_) {},
+        ),
+        throwsA(
+          isA<BrowserVerificationRequired>().having(
+            (e) => e.url.toString(),
+            'verification page',
+            'https://annas-archive.gl/slow_download/abc/0/0',
+          ),
+        ),
+      );
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
+  test('Anna Save and read-more anchors are not download links', () {
+    expect(
+      BookDownloadService.extractDownloadLinks(
+        '<a href="#" onclick="save()">Save</a>'
+        '<a href="">Read more…</a>'
+        '<a href="https://files.example/book.epub">📚 Download now</a>',
+        Uri.parse('https://annas-archive.gl/slow_download/abc/0/0'),
+      ),
+      ['https://files.example/book.epub'],
+    );
+  });
+  test('Anna copy-only partner controls resolve book URLs without JavaScript', () {
+    expect(
+      BookDownloadService.extractDownloadLinks(
+        '<main><span><button onclick="navigator.clipboard.writeText(value)">copy</button>'
+        '<span>http://files.example:6060/book.epub?token=example&amp;name=short</span></span>'
+        '<span><button onclick="navigator.clipboard.writeText(value)">copy</button>'
+        '<span>https://files.example/short.epub</span></span>'
+        '<span><button onclick="navigator.clipboard.writeText(value)">copy</button>'
+        '<span>javascript:alert(1)</span></span></main>',
+        Uri.parse('https://annas-archive.gl/slow_download/abc/0/1'),
+      ),
+      [
+        'http://files.example:6060/book.epub?token=example&name=short',
+        'https://files.example/short.epub',
+      ],
+    );
+  });
+  test(
+    'a failed verified partner falls back to an untried partner page',
+    () async {
+      adapter.respond = (request) {
+        if (request.uri.host == 'files.example') {
+          throw const HandshakeException('Certificate hostname mismatch');
+        }
+        if (request.uri.path.startsWith('/md5/')) {
+          return ResponseBody.fromString(
+            '<a href="/slow_download/abc/0/0">Slow Partner Server #1</a>'
+            '<a href="/slow_download/abc/0/1">Slow Partner Server #2</a>',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['text/html'],
+            },
+          );
+        }
+        return ResponseBody.fromString(
+          '<p>Please wait 20 seconds.</p>',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['text/html'],
+          },
+        );
+      };
+      await expectLater(
+        service.download(
+          const UnifiedBook(
+            title: 'Verified partner failed',
+            extension: 'epub',
+            source: BookSource.annasArchive,
+            downloadUrl: 'https://files.example/book.epub',
+            detailUrl: 'https://annas-archive.gl/md5/abc',
+          ),
+          CancelToken(),
+          (_) {},
+          verifiedPages: {
+            Uri.parse('https://annas-archive.gl/slow_download/abc/0/0?'),
+          },
+        ),
+        throwsA(
+          isA<BrowserVerificationRequired>().having(
+            (e) => e.url.toString(),
+            'next partner',
+            'https://annas-archive.gl/slow_download/abc/0/1',
+          ),
+        ),
+      );
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
+  test(
     'rejects HTML even with a binary MIME type and removes partial file',
     () async {
       adapter.respond = (_) => ResponseBody.fromString(

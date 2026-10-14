@@ -261,6 +261,7 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
       path = await storeRepository.downloadBook(
         book: book,
         cancelToken: token,
+        verifiedPages: event.verifiedPages,
         onProgress: (progress) {
           if (!emit.isDone && !isClosed) {
             emit(
@@ -298,12 +299,21 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
           !isClosed &&
           error is BrowserVerificationRequired &&
           !token.isCancelled &&
-          event.allowBrowserVerification) {
+          event.allowBrowserVerification &&
+          event.verifiedPages.length < 3 &&
+          !event.verifiedPages.any(
+            (page) =>
+                page.origin == error.url.origin && page.path == error.url.path,
+          )) {
         emit(
           state.copyWith(
             verificationRequests: [
               ...state.verificationRequests,
-              DownloadVerification(book, error.url),
+              DownloadVerification(
+                book,
+                error.url,
+                verifiedPages: event.verifiedPages,
+              ),
             ],
           ),
         );
