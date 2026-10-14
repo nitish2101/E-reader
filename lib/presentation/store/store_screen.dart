@@ -292,6 +292,31 @@ class _StoreContentState extends State<_StoreContent> {
             ),
           ),
           const SizedBox(height: 24),
+          if (state.status == SearchStatus.failure) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Search unavailable',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(state.error ?? 'Please try again.'),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () => _retry(state),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry search'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
           Text('Format', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 8),
           Wrap(
@@ -365,7 +390,7 @@ class _StoreContentState extends State<_StoreContent> {
               padding: const EdgeInsets.only(top: 16),
               child: Text(state.error!),
             ),
-          if (state.warnings.isNotEmpty)
+          if (state.warnings.isNotEmpty && state.status != SearchStatus.failure)
             TextButton.icon(
               onPressed: () => _retry(state),
               icon: const Icon(Icons.refresh),
@@ -452,16 +477,7 @@ class _StoreContentState extends State<_StoreContent> {
       );
     }
     if (state.status == SearchStatus.failure) {
-      return _message(
-        Icons.cloud_off_outlined,
-        'Search unavailable',
-        state.error ?? 'Please try again.',
-        action: FilledButton.icon(
-          onPressed: () => _retry(state),
-          icon: const Icon(Icons.refresh),
-          label: const Text('Retry search'),
-        ),
-      );
+      return const SizedBox.shrink();
     }
     if (state.status == SearchStatus.initial) {
       return _message(
